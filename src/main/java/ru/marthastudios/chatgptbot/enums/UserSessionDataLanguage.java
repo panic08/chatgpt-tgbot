@@ -1,6 +1,6 @@
 package ru.marthastudios.chatgptbot.enums;
 
-public enum UserDataLanguage {
+public enum UserSessionDataLanguage {
     RU,
     UA,
     EN
