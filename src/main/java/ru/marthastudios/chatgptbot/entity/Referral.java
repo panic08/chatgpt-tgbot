@@ -4,19 +4,16 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name = "users_subscriptions")
+@Table(name = "referrals")
 @AllArgsConstructor
 @NoArgsConstructor
-@Setter
 @Getter
+@Setter
 @Builder
-public class Subscription {
+public class Referral {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    @Column(nullable = false)
-    private Long expiration;
-    @OneToOne
-    @JoinColumn(name = "user_data_id")
-    private UserData userData;
+    @Column(name = "telegram_user_id", nullable = false)
+    private Long telegramUserId;
 }

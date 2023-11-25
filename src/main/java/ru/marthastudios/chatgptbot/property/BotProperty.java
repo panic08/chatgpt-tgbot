@@ -14,4 +14,7 @@ public class BotProperty {
 
     @Value("${telegram.botToken}")
     private String token;
+
+    @Value("${telegram.channel.chatId}")
+    private String channelChatId;
 }

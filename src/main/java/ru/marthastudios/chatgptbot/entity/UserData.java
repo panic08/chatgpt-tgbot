@@ -19,7 +19,7 @@ public class UserData {
     @Column(name = "invited", nullable = false)
     private Integer invited;
     @OneToOne
-    @JoinColumn(name = "id")
+    @JoinColumn(name = "user_id")
     private User user;
     @OneToOne(cascade = CascadeType.ALL, mappedBy = "userData", fetch = FetchType.EAGER)
     private Subscription subscription;
