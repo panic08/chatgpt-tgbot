@@ -13,6 +13,7 @@ import java.util.Map;
 @NoArgsConstructor
 @Builder
 public class UserSessionData {
+    private String model;
     private UserSessionDataLanguage language;
     private UserSessionDataRole role;
     private Map<Integer, ChatRequestDto.Message> messageHistory;

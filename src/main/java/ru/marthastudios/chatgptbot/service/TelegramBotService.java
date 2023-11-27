@@ -24,6 +24,7 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.Keyboard
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.KeyboardRow;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import ru.marthastudios.chatgptbot.api.OpenaiApi;
+import ru.marthastudios.chatgptbot.callback.*;
 import ru.marthastudios.chatgptbot.dto.openai.ChatRequestDto;
 import ru.marthastudios.chatgptbot.dto.openai.ChatResponseDto;
 import ru.marthastudios.chatgptbot.entity.Subscription;
@@ -57,44 +58,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
     private SubscriptionService subscriptionService;
     @Autowired
     private OpenaiApi openaiApi;
-    private static final Map<Long, UserSessionData> usersSessionsDataMap = new HashMap<>();
+    public static final Map<Long, UserSessionData> usersSessionsDataMap = new HashMap<>();
+    public static Map<Long, Long> usersCooldownsMap = new HashMap<>();
     private static final Map<Long, CustomPair<Integer, Long>> giveSubscriptionSteps = new HashMap<>();
     private static final Set<Long> takeSubscriptionSteps = new HashSet<>();
     private static final Set<Long> banUserSteps = new HashSet<>();
     private static final Set<Long> unbanUserSteps = new HashSet<>();
-    private static final Map<Long, Long> usersCooldownsMap = new HashMap<>();
-    private static final String READY_SUBSCRIBED_CALLBACK_DATA = "ready subscribed callback data";
-    private static final String BUY_SUBSCRIPTION_CALLBACK_DATA = "buy subscription callback data";
-    private static final String CHANGE_LANGUAGE_CALLBACK_DATA = "change language callback data";
-    private static final String INVITE_FRIEND_CALLBACK_DATA = "invite friend callback data";
-    private static final String BACK_PROFILE_MESSAGE_CALLBACK_DATA = "back profile message callback data";
-    private static final String SELECT_RU_LANGUAGE_CALLBACK_DATA = "select ru language callback data";
-    private static final String SELECT_EN_LANGUAGE_CALLBACK_DATA = "select en language callback data";
-    private static final String SELECT_UA_LANGUAGE_CALLBACK_DATA = "select ua language callback data";
+    private static final Set<Long> giveAdminSteps = new HashSet<>();
+    private static final Set<Long> takeAdminSteps = new HashSet<>();
 
-    private static final String CHOOSE_CHAT_GPT_ROLE_CALLBACK_DATA = "choose chat gpt role callback data";
-    private static final String CHOOSE_PROGRAMMER_ROLE_CALLBACK_DATA = "choose programmer role callback data";
-    private static final String CHOOSE_PSYCOLOGIST_ROLE_CALLBACK_DATA = "choose psycologist role callback data";
-    private static final String CHOOSE_JOKER_ROLE_CALLBACK_DATA = "choose joker role callback data";
-    private static final String CHOOSE_LINGUIST_ROLE_CALLBACK_DATA = "choose linguist role callback data";
-    private static final String CHOOSE_POET_ROLE_CALLBACK_DATA = "choose poet role callback data";
-    private static final String CHOOSE_MONA_LISA_ROLE_CALLBACK_DATA = "choose mona lisa role callback data";
-    private static final String CHOOSE_EINSTEIN_ROLE_CALLBACK_DATA = "choose einstein role callback data";
-    private static final String CHOOSE_BULLY_ROLE_CALLBACK_DATA = "choose bully role callback data";
 
-    private static final String STAT_CALLBACK_DATA = "stat callback data";
-    private static final String ALL_USERS_DATA_CALLBACK_DATA = "all users data callback data";
-    private static final String GIVE_SUBSCRIBE_CALLBACK_DATA = "give subscribe callback data";
-    private static final String TAKE_SUBSCRIBE_CALLBACK_DATA = "take subscribe callback data";
-    private static final String BAN_USER_CALLBACK_DATA = "ban user callback data";
-    private static final String UNBAN_USER_CALLBACK_DATA = "unban user callback data";
-
-    private static final String BACK_ADMIN_CALLBACK_DATA = "back admin callback data";
-    private static final String BACK_ADMIN_GIVE_SUBSCRIBE_CALLBACK_DATA = "back admin give subscribe callback data";
-    private static final String BACK_ADMIN_TAKE_SUBSCRIBE_CALLBACK_DATA = "back admin take subscribe callback data";
-    private static final String BACK_ADMIN_BAN_USER_CALLBACK_DATA = "back admin unban user callback data";
-    private static final String BACK_ADMIN_UNBAN_USER_CALLBACK_DATA = "back admin ban user callback data";
-    public TelegramBotService(BotProperty botProperty){
+    public TelegramBotService(BotProperty botProperty) {
         this.botProperty = botProperty;
         List<BotCommand> listOfCommands = new ArrayList<>();
 
@@ -169,19 +143,39 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                 User user = userService.getByTelegramChatId(chatId);
 
-                if (!user.getIsAccountNonLocked()){
+                if (user == null) {
+                    user = User.builder()
+                            .telegramUserId(update.getMessage().getFrom().getId())
+                            .telegramChatId(chatId)
+                            .role(UserRole.DEFAULT)
+                            .isAccountNonLocked(true)
+                            .timestamp(System.currentTimeMillis())
+                            .build();
+
+                    UserData userData = UserData.builder()
+                            .user(user)
+                            .availableRequests(5)
+                            .invited(0)
+                            .build();
+
+                    user.setUserData(userData);
+
+                    userService.create(user);
+                }
+
+                if (!user.getIsAccountNonLocked()) {
                     UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
                     UserSessionDataLanguage language = null;
 
-                    if (userSessionData == null){
+                    if (userSessionData == null) {
                         language = UserSessionDataLanguage.RU;
                     } else {
-                        language  = userSessionData.getLanguage();
+                        language = userSessionData.getLanguage();
                     }
 
                     String banMessageText = null;
 
-                    switch (language){
+                    switch (language) {
                         case RU -> {
                             banMessageText = "\uD83D\uDEAB <b>Вы были заблокированы в этом боте</b>";
                         }
@@ -201,7 +195,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                     try {
                         execute(banMessage);
-                    } catch (TelegramApiException e){
+                    } catch (TelegramApiException e) {
                         e.printStackTrace();
                     }
 
@@ -239,28 +233,32 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         handleChooseRole(chatId);
                         return;
                     }
+                    case "\uD83D\uDD04 Поменять модель", "\uD83D\uDD04 Змінити модель", "\uD83D\uDD04 Change model" -> {
+                        handleChangeModel(user, chatId);
+                        return;
+                    }
                     case "\uD83D\uDED1 Админ-панель" -> {
                         handleAdminMessage(user, chatId);
                         return;
                     }
                 }
 
-                if (giveSubscriptionSteps.get(chatId) != null){
+                if (giveSubscriptionSteps.get(chatId) != null) {
                     CustomPair<Integer, Long> pair = giveSubscriptionSteps.get(chatId);
 
                     int step = pair.getFirstValue();
 
-                    switch (step){
+                    switch (step) {
                         case 0 -> {
                             long telegramUserId = Long.parseLong(text);
 
                             User user1 = userService.getByTelegramUserId(telegramUserId);
 
-                            if (user1 == null){
+                            if (user1 == null) {
                                 InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                                 InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                        .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                                        .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                                         .text("\uD83D\uDD19 Назад")
                                         .build();
 
@@ -285,17 +283,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                                 try {
                                     execute(message);
-                                } catch (TelegramApiException e){
+                                } catch (TelegramApiException e) {
                                     e.printStackTrace();
                                 }
                                 return;
                             }
 
-                            if (user1.getUserData().getSubscription() != null){
+                            if (user1.getUserData().getSubscription() != null) {
                                 InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                                 InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                        .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                                        .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                                         .text("\uD83D\uDD19 Назад")
                                         .build();
 
@@ -320,7 +318,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                                 try {
                                     execute(message);
-                                } catch (TelegramApiException e){
+                                } catch (TelegramApiException e) {
                                     e.printStackTrace();
                                 }
                                 return;
@@ -335,7 +333,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                             InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                             InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                    .callbackData(BACK_ADMIN_GIVE_SUBSCRIBE_CALLBACK_DATA)
+                                    .callbackData(BackCallback.BACK_ADMIN_GIVE_SUBSCRIBE_CALLBACK_DATA)
                                     .text("\uD83D\uDD19 Назад")
                                     .build();
 
@@ -358,11 +356,11 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                             try {
                                 execute(message);
-                            } catch (TelegramApiException e){
+                            } catch (TelegramApiException e) {
                                 e.printStackTrace();
                             }
                         }
-                        case  1 -> {
+                        case 1 -> {
                             User user1 = userService.getByTelegramUserId(pair.getSecondValue());
 
                             Subscription subscription = Subscription.builder()
@@ -372,12 +370,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                             subscriptionService.create(subscription);
 
+                            user1.getUserData().setSubscription(subscription);
+
                             giveSubscriptionSteps.remove(chatId);
 
                             InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                             InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                    .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                                    .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                                     .text("\uD83D\uDD19 Назад")
                                     .build();
 
@@ -392,7 +392,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                             inlineKeyboardMarkup.setKeyboard(rowList);
 
                             SendMessage message = SendMessage.builder()
-                                    .text("✅ <b>Вы успешно добавили пользователю c идентификатором </b><code>" + pair.getSecondValue() +  "</code> <b>подписку на</b> " + text + " <b>дней</b>")
+                                    .text("✅ <b>Вы успешно добавили пользователю c идентификатором </b><code>" + pair.getSecondValue() + "</code> <b>подписку на</b> " + text + " <b>дней</b>")
                                     .chatId(chatId)
                                     .parseMode("html")
                                     .replyMarkup(inlineKeyboardMarkup)
@@ -400,24 +400,52 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                             try {
                                 execute(message);
-                            } catch (TelegramApiException e){
+                            } catch (TelegramApiException e) {
                                 e.printStackTrace();
                             }
+
+                            UserSessionData userSessionData = usersSessionsDataMap.get(pair.getSecondValue());
+
+                            if (userSessionData == null){
+                                userSessionData = getDefUserSessionData();
+                            }
+
+                            String getSubMessageText = null;
+
+                            switch (userSessionData.getLanguage()){
+                                case RU -> getSubMessageText = "✅ <b>Вы получили подписку от Администратора на</b> " + text + " <b>дней</b>";
+                                case EN -> getSubMessageText = "✅ <b>You have received a subscription from the Administrator to</b> " + text + " <b>days</b>";
+                                case UA -> getSubMessageText = "✅ <b>Ви отримали передплату від Адміністратора на</b> " + text + " <b>днів</b>";
+                            }
+
+                            SendMessage getSubMessage = SendMessage.builder()
+                                    .text(getSubMessageText)
+                                    .replyMarkup(getMainReplyKeyboardMarkup(userSessionData.getLanguage(), user1))
+                                    .parseMode("html")
+                                    .chatId(pair.getSecondValue())
+                                    .build();
+
+                            try {
+                                execute(getSubMessage);
+                            } catch (TelegramApiException e) {
+                                e.printStackTrace();
+                            }
+
                         }
                     }
                     return;
                 }
 
-                if (takeSubscriptionSteps.contains(chatId)){
+                if (takeSubscriptionSteps.contains(chatId)) {
                     long telegramUserId = Long.parseLong(text);
 
                     User user1 = userService.getByTelegramUserId(telegramUserId);
 
-                    if (user1 == null){
+                    if (user1 == null) {
                         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                         InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                                .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                                 .text("\uD83D\uDD19 Назад")
                                 .build();
 
@@ -440,13 +468,20 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(message);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
 
                         takeSubscriptionSteps.remove(chatId);
                         return;
                     }
+
+                    UserSessionData userSessionData = usersSessionsDataMap.get(user1.getTelegramChatId());
+
+                    userSessionData.setModel("gpt-3.5-turbo");
+                    userSessionData.setMessageHistory(new HashMap<>());
+
+                    usersSessionsDataMap.put(user1.getTelegramChatId(), userSessionData);
 
                     subscriptionService.deleteById(user1.getUserData().getSubscription());
 
@@ -455,7 +490,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                     InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                            .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                            .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                             .text("\uD83D\uDD19 Назад")
                             .build();
 
@@ -470,7 +505,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     inlineKeyboardMarkup.setKeyboard(rowList);
 
                     SendMessage message = SendMessage.builder()
-                            .text("❎ <b>Вы успешно забрали подписку у пользователя с идентификатором</b> <code>"  + telegramUserId + "</code>")
+                            .text("❎ <b>Вы успешно забрали подписку у пользователя с идентификатором</b> <code>" + telegramUserId + "</code>")
                             .chatId(chatId)
                             .parseMode("html")
                             .replyMarkup(inlineKeyboardMarkup)
@@ -478,22 +513,22 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                     try {
                         execute(message);
-                    } catch (TelegramApiException e){
+                    } catch (TelegramApiException e) {
                         e.printStackTrace();
                     }
                     return;
                 }
 
-                if (banUserSteps.contains(chatId)){
+                if (banUserSteps.contains(chatId)) {
                     long telegramUserId = Long.parseLong(text);
 
                     User user1 = userService.getByTelegramUserId(telegramUserId);
 
-                    if (user1 == null){
+                    if (user1 == null) {
                         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                         InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                                .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                                 .text("\uD83D\uDD19 Назад")
                                 .build();
 
@@ -516,7 +551,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(message);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
 
@@ -532,7 +567,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                     InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                            .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                            .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                             .text("\uD83D\uDD19 Назад")
                             .build();
 
@@ -547,7 +582,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     inlineKeyboardMarkup.setKeyboard(rowList);
 
                     SendMessage message = SendMessage.builder()
-                            .text("❎ <b>Вы успешно заблокировали пользователя с идентификатором</b> <code>"  + telegramUserId + "</code>")
+                            .text("❎ <b>Вы успешно заблокировали пользователя с идентификатором</b> <code>" + telegramUserId + "</code>")
                             .chatId(chatId)
                             .parseMode("html")
                             .replyMarkup(inlineKeyboardMarkup)
@@ -555,21 +590,21 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                     try {
                         execute(message);
-                    } catch (TelegramApiException e){
+                    } catch (TelegramApiException e) {
                         e.printStackTrace();
                     }
                     return;
                 }
-                if (unbanUserSteps.contains(chatId)){
+                if (unbanUserSteps.contains(chatId)) {
                     long telegramUserId = Long.parseLong(text);
 
                     User user1 = userService.getByTelegramUserId(telegramUserId);
 
-                    if (user1 == null){
+                    if (user1 == null) {
                         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                         InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                                .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                                 .text("\uD83D\uDD19 Назад")
                                 .build();
 
@@ -592,7 +627,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(message);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
 
@@ -608,7 +643,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                     InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                            .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                            .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                             .text("\uD83D\uDD19 Назад")
                             .build();
 
@@ -623,7 +658,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     inlineKeyboardMarkup.setKeyboard(rowList);
 
                     SendMessage message = SendMessage.builder()
-                            .text("✅ <b>Вы успешно разблокировали пользователя с идентификатором</b> <code>"  + telegramUserId + "</code>")
+                            .text("✅ <b>Вы успешно разблокировали пользователя с идентификатором</b> <code>" + telegramUserId + "</code>")
                             .chatId(chatId)
                             .parseMode("html")
                             .replyMarkup(inlineKeyboardMarkup)
@@ -631,7 +666,163 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                     try {
                         execute(message);
-                    } catch (TelegramApiException e){
+                    } catch (TelegramApiException e) {
+                        e.printStackTrace();
+                    }
+                    return;
+                }
+
+                if (giveAdminSteps.contains(chatId)){
+
+                    long telegramUserId = Long.parseLong(text);
+
+                    User user1 = userService.getByTelegramUserId(telegramUserId);
+
+                    if (user1 == null) {
+                        InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
+
+                        InlineKeyboardButton backButton = InlineKeyboardButton.builder()
+                                .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
+                                .text("\uD83D\uDD19 Назад")
+                                .build();
+
+                        List<InlineKeyboardButton> keyboardButtonsRow1 = new ArrayList<>();
+
+                        keyboardButtonsRow1.add(backButton);
+
+                        List<List<InlineKeyboardButton>> rowList = new ArrayList<>();
+
+                        rowList.add(keyboardButtonsRow1);
+
+                        inlineKeyboardMarkup.setKeyboard(rowList);
+
+                        SendMessage message = SendMessage.builder()
+                                .text("\uD83D\uDEAB <b>Пользователя с таким идентификатором не существует</b>")
+                                .chatId(chatId)
+                                .parseMode("html")
+                                .replyMarkup(inlineKeyboardMarkup)
+                                .build();
+
+                        try {
+                            execute(message);
+                        } catch (TelegramApiException e) {
+                            e.printStackTrace();
+                        }
+
+                        giveAdminSteps.remove(chatId);
+                        return;
+                    }
+
+                    user1.setRole(UserRole.ADMIN);
+
+                    userService.create(user1);
+                    giveAdminSteps.remove(chatId);
+
+                    InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
+
+                    InlineKeyboardButton backButton = InlineKeyboardButton.builder()
+                            .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
+                            .text("\uD83D\uDD19 Назад")
+                            .build();
+
+                    List<InlineKeyboardButton> keyboardButtonsRow1 = new ArrayList<>();
+
+                    keyboardButtonsRow1.add(backButton);
+
+                    List<List<InlineKeyboardButton>> rowList = new ArrayList<>();
+
+                    rowList.add(keyboardButtonsRow1);
+
+                    inlineKeyboardMarkup.setKeyboard(rowList);
+
+                    SendMessage message = SendMessage.builder()
+                            .text("✅ <b>Вы успешно выдали права администратора пользователю с идентификатором</b> <code>" + text + "</code>")
+                            .chatId(chatId)
+                            .parseMode("html")
+                            .replyMarkup(inlineKeyboardMarkup)
+                            .build();
+
+                    try {
+                        execute(message);
+                    } catch (TelegramApiException e) {
+                        e.printStackTrace();
+                    }
+                    return;
+                }
+
+                if (takeAdminSteps.contains(chatId)){
+
+                    long telegramUserId = Long.parseLong(text);
+
+                    User user1 = userService.getByTelegramUserId(telegramUserId);
+
+                    if (user1 == null) {
+                        InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
+
+                        InlineKeyboardButton backButton = InlineKeyboardButton.builder()
+                                .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
+                                .text("\uD83D\uDD19 Назад")
+                                .build();
+
+                        List<InlineKeyboardButton> keyboardButtonsRow1 = new ArrayList<>();
+
+                        keyboardButtonsRow1.add(backButton);
+
+                        List<List<InlineKeyboardButton>> rowList = new ArrayList<>();
+
+                        rowList.add(keyboardButtonsRow1);
+
+                        inlineKeyboardMarkup.setKeyboard(rowList);
+
+                        SendMessage message = SendMessage.builder()
+                                .text("\uD83D\uDEAB <b>Пользователя с таким идентификатором не существует</b>")
+                                .chatId(chatId)
+                                .parseMode("html")
+                                .replyMarkup(inlineKeyboardMarkup)
+                                .build();
+
+                        try {
+                            execute(message);
+                        } catch (TelegramApiException e) {
+                            e.printStackTrace();
+                        }
+
+                        takeAdminSteps.remove(chatId);
+                        return;
+                    }
+
+                    user1.setRole(UserRole.DEFAULT);
+
+                    userService.create(user1);
+                    takeAdminSteps.remove(chatId);
+
+                    InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
+
+                    InlineKeyboardButton backButton = InlineKeyboardButton.builder()
+                            .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
+                            .text("\uD83D\uDD19 Назад")
+                            .build();
+
+                    List<InlineKeyboardButton> keyboardButtonsRow1 = new ArrayList<>();
+
+                    keyboardButtonsRow1.add(backButton);
+
+                    List<List<InlineKeyboardButton>> rowList = new ArrayList<>();
+
+                    rowList.add(keyboardButtonsRow1);
+
+                    inlineKeyboardMarkup.setKeyboard(rowList);
+
+                    SendMessage message = SendMessage.builder()
+                            .text("✅ <b>Вы успешно забрали права администратора у пользователя с идентификатором</b> <code>" + text + "</code>")
+                            .chatId(chatId)
+                            .parseMode("html")
+                            .replyMarkup(inlineKeyboardMarkup)
+                            .build();
+
+                    try {
+                        execute(message);
+                    } catch (TelegramApiException e) {
                         e.printStackTrace();
                     }
                     return;
@@ -639,76 +830,22 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                 Long timestamp = usersCooldownsMap.get(chatId);
 
-                if (timestamp != null && timestamp > System.currentTimeMillis()){
+                if (timestamp != null && timestamp > System.currentTimeMillis()) {
                     UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
                     UserSessionDataLanguage language = null;
 
-                    if (userSessionData == null){
+                    if (userSessionData == null) {
                         language = UserSessionDataLanguage.RU;
                     } else {
                         language = userSessionData.getLanguage();
                     }
 
-                    int secCooldown = (int) ((timestamp - System.currentTimeMillis())/ 1000);
+                    int secCooldown = (int) ((timestamp - System.currentTimeMillis()) / 1000);
 
                     String cooldownWarningMessageText = null;
 
-                    switch (language){
-                        case RU -> {
-                          cooldownWarningMessageText = "Вы пишите слишком часто!\n" +
-                                  "Повторите запрос через " + secCooldown + " сек.";
-                        }
-                        case UA -> {
-                            cooldownWarningMessageText = "Ви пишете занадто часто!\n" +
-                                    "Повторіть запит через " + secCooldown + " сек.";
-                        }
-                        case EN -> {
-                            cooldownWarningMessageText = "You write too often!\n" +
-                                    "Repeat the request through " + secCooldown + " sec.";
-                        }
-                    }
-
-                    SendMessage cooldownMessage = SendMessage.builder()
-                            .text(cooldownWarningMessageText)
-                            .chatId(chatId)
-                            .build();
-
-                    try {
-                        execute(cooldownMessage);
-                    } catch (TelegramApiException e){
-                        e.printStackTrace();
-                    }
-
-                    return;
-                }
-
-                usersCooldownsMap.put(chatId, System.currentTimeMillis() + 4000);
-                createChatCompletion(userService.getByTelegramChatId(chatId), chatId, text);
-
-
-            } else if (update.hasMessage() && update.getMessage().hasVoice()){
-                long chatId = update.getMessage().getChatId();
-                Voice voice = update.getMessage().getVoice();
-
-                Long timestamp = usersCooldownsMap.get(chatId);
-
-                UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
-
-                UserSessionDataLanguage language = null;
-
-                if (userSessionData == null){
-                    language = UserSessionDataLanguage.RU;
-                } else {
-                    language = userSessionData.getLanguage();
-                }
-
-                if (timestamp != null && timestamp > System.currentTimeMillis()){
-                    int secCooldown = (int) ((timestamp - System.currentTimeMillis())/ 1000);
-
-                    String cooldownWarningMessageText = null;
-
-                    switch (language){
+                    switch (language) {
                         case RU -> {
                             cooldownWarningMessageText = "Вы пишите слишком часто!\n" +
                                     "Повторите запрос через " + secCooldown + " сек.";
@@ -730,7 +867,61 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                     try {
                         execute(cooldownMessage);
-                    } catch (TelegramApiException e){
+                    } catch (TelegramApiException e) {
+                        e.printStackTrace();
+                    }
+
+                    return;
+                }
+
+                usersCooldownsMap.put(chatId, System.currentTimeMillis() + 4000);
+                createChatCompletion(userService.getByTelegramChatId(chatId), chatId, text);
+
+
+            } else if (update.hasMessage() && update.getMessage().hasVoice()) {
+                long chatId = update.getMessage().getChatId();
+                Voice voice = update.getMessage().getVoice();
+
+                Long timestamp = usersCooldownsMap.get(chatId);
+
+                UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
+
+                UserSessionDataLanguage language = null;
+
+                if (userSessionData == null) {
+                    language = UserSessionDataLanguage.RU;
+                } else {
+                    language = userSessionData.getLanguage();
+                }
+
+                if (timestamp != null && timestamp > System.currentTimeMillis()) {
+                    int secCooldown = (int) ((timestamp - System.currentTimeMillis()) / 1000);
+
+                    String cooldownWarningMessageText = null;
+
+                    switch (language) {
+                        case RU -> {
+                            cooldownWarningMessageText = "Вы пишите слишком часто!\n" +
+                                    "Повторите запрос через " + secCooldown + " сек.";
+                        }
+                        case UA -> {
+                            cooldownWarningMessageText = "Ви пишете занадто часто!\n" +
+                                    "Повторіть запит через " + secCooldown + " сек.";
+                        }
+                        case EN -> {
+                            cooldownWarningMessageText = "You write too often!\n" +
+                                    "Repeat the request through " + secCooldown + " sec.";
+                        }
+                    }
+
+                    SendMessage cooldownMessage = SendMessage.builder()
+                            .text(cooldownWarningMessageText)
+                            .chatId(chatId)
+                            .build();
+
+                    try {
+                        execute(cooldownMessage);
+                    } catch (TelegramApiException e) {
                         e.printStackTrace();
                     }
 
@@ -744,55 +935,55 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                 try {
                     URL = execute(getFile).getFileUrl(botProperty.getToken());
-                } catch (TelegramApiException e){
+                } catch (TelegramApiException e) {
                     e.printStackTrace();
                 }
 
-                File file = null;
+                File tempFile = null;
 
                 try {
-                    file = UrlFileDownloader.downloadFile(URL);
-                } catch (Exception e){
+                    tempFile = UrlFileDownloader.downloadFile(URL);
+                } catch (Exception e) {
                     e.printStackTrace();
                 }
 
                 String lang = null;
 
-                switch (language){
+                switch (language) {
                     case RU -> lang = "ru";
                     case UA -> lang = "uk";
                     case EN -> lang = "en";
                 }
 
-                String transcriptionText = openaiApi.createAudioTranscription(file, lang).getText();
+                String transcriptionText = openaiApi.createAudioTranscription(tempFile, lang).getText();
 
-                file.delete();
+                boolean isDeleted = tempFile.delete();
 
                 createChatCompletion(userService.getByTelegramChatId(chatId), chatId, transcriptionText);
 
-            } else if (update.hasCallbackQuery() && update.getCallbackQuery().getData() != null){
+            } else if (update.hasCallbackQuery() && update.getCallbackQuery().getData() != null) {
                 long chatId = update.getCallbackQuery().getMessage().getChatId();
                 int messageId = update.getCallbackQuery().getMessage().getMessageId();
 
-                switch (update.getCallbackQuery().getData()){
-                    case READY_SUBSCRIBED_CALLBACK_DATA -> {
+                switch (update.getCallbackQuery().getData()) {
+                    case ProfileCallback.READY_SUBSCRIBED_CALLBACK_DATA -> {
                         GetChatMember getChatMember = new GetChatMember(botProperty.getChannelChatId(), update.getCallbackQuery().getFrom().getId());
 
                         ChatMember chatMember = null;
 
                         try {
                             chatMember = execute(getChatMember);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
 
-                        if (chatMember.getStatus().equals("left")){
+                        if (chatMember.getStatus().equals("left")) {
                             deleteMessage(messageId, chatId);
                             sendUnsubscribedMessage(chatId);
                         } else {
                             boolean existsByTelegramUserId = userService.existsByTelegramUserId(chatId);
 
-                            if (!existsByTelegramUserId){
+                            if (!existsByTelegramUserId) {
                                 User user = User.builder()
                                         .telegramUserId(update.getCallbackQuery().getFrom().getId())
                                         .telegramChatId(chatId)
@@ -815,12 +1006,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
                             handleStartMessage(chatId);
                         }
                     }
-                    case SELECT_RU_LANGUAGE_CALLBACK_DATA -> {
+                    case SelectLanguageCallback.SELECT_RU_LANGUAGE_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -830,12 +1021,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         deleteMessage(messageId, chatId);
                         sendSuccessSubscribeMessage(user, chatId);
                     }
-                    case SELECT_UA_LANGUAGE_CALLBACK_DATA -> {
+                    case SelectLanguageCallback.SELECT_UA_LANGUAGE_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
                         userSessionData.setLanguage(UserSessionDataLanguage.UA);
@@ -844,12 +1035,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         deleteMessage(messageId, chatId);
                         sendSuccessSubscribeMessage(user, chatId);
                     }
-                    case SELECT_EN_LANGUAGE_CALLBACK_DATA -> {
+                    case SelectLanguageCallback.SELECT_EN_LANGUAGE_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -859,8 +1050,11 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         deleteMessage(messageId, chatId);
                         sendSuccessSubscribeMessage(user, chatId);
                     }
-                    case BUY_SUBSCRIPTION_CALLBACK_DATA -> handlePayMessage(chatId);
-                    case CHANGE_LANGUAGE_CALLBACK_DATA -> {
+                    case ProfileCallback.BUY_SUBSCRIPTION_CALLBACK_DATA -> {
+                        deleteMessage(messageId, chatId);
+                        handlePayMessage(chatId);
+                    }
+                    case ProfileCallback.CHANGE_LANGUAGE_CALLBACK_DATA -> {
                         EditMessageText editMessage = EditMessageText.builder()
                                 .chatId(chatId)
                                 .messageId(messageId)
@@ -870,17 +1064,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                         InlineKeyboardButton ruButton = InlineKeyboardButton.builder()
-                                .callbackData(SELECT_RU_LANGUAGE_CALLBACK_DATA)
+                                .callbackData(SelectLanguageCallback.SELECT_RU_LANGUAGE_CALLBACK_DATA)
                                 .text("\uD83C\uDDF7\uD83C\uDDFA RU")
                                 .build();
 
                         InlineKeyboardButton uaButton = InlineKeyboardButton.builder()
-                                .callbackData(SELECT_UA_LANGUAGE_CALLBACK_DATA)
+                                .callbackData(SelectLanguageCallback.SELECT_UA_LANGUAGE_CALLBACK_DATA)
                                 .text("\uD83C\uDDFA\uD83C\uDDE6 UA")
                                 .build();
 
                         InlineKeyboardButton enButton = InlineKeyboardButton.builder()
-                                .callbackData(SELECT_EN_LANGUAGE_CALLBACK_DATA)
+                                .callbackData(SelectLanguageCallback.SELECT_EN_LANGUAGE_CALLBACK_DATA)
                                 .text("\uD83C\uDDEC\uD83C\uDDE7 EN")
                                 .build();
 
@@ -900,24 +1094,24 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case BACK_PROFILE_MESSAGE_CALLBACK_DATA -> {
+                    case BackCallback.BACK_PROFILE_MESSAGE_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         editProfileMessage(user, messageId, chatId);
                     }
-                    case INVITE_FRIEND_CALLBACK_DATA -> {
+                    case ProfileCallback.INVITE_FRIEND_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         editInviteFriendMessage(user, messageId, chatId, update.getCallbackQuery().getFrom().getId());
                     }
-                    case CHOOSE_CHAT_GPT_ROLE_CALLBACK_DATA -> {
+                    case ChooseCallback.CHOOSE_CHAT_GPT_ROLE_CALLBACK_DATA -> {
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -928,7 +1122,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         String messageText = null;
 
-                        switch (userSessionData.getLanguage()){
+                        switch (userSessionData.getLanguage()) {
                             case RU -> messageText = "\uD83E\uDD16 Привет! Я <b>ChatGPT.</b> Чем я могу тебе помочь?";
                             case UA -> messageText = "\uD83E\uDD16 Привіт! Я <b>ChatGPT.</b> Чим я можу тобі допомогти?";
                             case EN -> messageText = "\uD83E\uDD16 Hello! I am <b>ChatGPT.</b> How can I help you?";
@@ -943,14 +1137,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case CHOOSE_PROGRAMMER_ROLE_CALLBACK_DATA -> {
+                    case ChooseCallback.CHOOSE_PROGRAMMER_ROLE_CALLBACK_DATA -> {
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -961,7 +1155,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         String messageText = null;
 
-                        switch (userSessionData.getLanguage()){
+                        switch (userSessionData.getLanguage()) {
                             case RU -> messageText = "\uD83D\uDC68\u200D\uD83D\uDCBB Привет! Я <b>Программист-ассистент.</b> Чем я могу тебе помочь?";
                             case UA -> messageText = "\uD83D\uDC68\u200D\uD83D\uDCBB Привіт! Я <b>Програміст-асистент.</b> Чим я можу тобі допомогти?";
                             case EN -> messageText = "\uD83D\uDC68\u200D\uD83D\uDCBB Hello! I am <b>Programmer-assistant.</b> How can I help you?";
@@ -976,14 +1170,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case CHOOSE_PSYCOLOGIST_ROLE_CALLBACK_DATA -> {
+                    case ChooseCallback.CHOOSE_PSYCOLOGIST_ROLE_CALLBACK_DATA -> {
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -994,7 +1188,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         String messageText = null;
 
-                        switch (userSessionData.getLanguage()){
+                        switch (userSessionData.getLanguage()) {
                             case RU -> messageText = "\uD83D\uDC68\u200D⚕ Привет! Я <b>Психолог.</b> Чем я могу тебе помочь?";
                             case UA -> messageText = "\uD83D\uDC68\u200D⚕ Привіт! Я <b>Психолог.</b> Чим я можу тобі допомогти?";
                             case EN -> messageText = "\uD83D\uDC68\u200D⚕ Hello! I am <b>Psychologist.</b> How can I help you?";
@@ -1009,14 +1203,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case CHOOSE_JOKER_ROLE_CALLBACK_DATA -> {
+                    case ChooseCallback.CHOOSE_JOKER_ROLE_CALLBACK_DATA -> {
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -1027,7 +1221,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         String messageText = null;
 
-                        switch (userSessionData.getLanguage()){
+                        switch (userSessionData.getLanguage()) {
                             case RU -> messageText = "\uD83E\uDD39 Привет! Я <b>Шутник.</b> Чем я могу тебе помочь?";
                             case UA -> messageText = "\uD83E\uDD39 Привіт! Я <b>Жартівник.</b> Чим я можу тобі допомогти?";
                             case EN -> messageText = "\uD83E\uDD39 Hello! I am <b>Joker.</b> How can I help you?";
@@ -1042,14 +1236,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case CHOOSE_LINGUIST_ROLE_CALLBACK_DATA -> {
+                    case ChooseCallback.CHOOSE_LINGUIST_ROLE_CALLBACK_DATA -> {
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -1060,7 +1254,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         String messageText = null;
 
-                        switch (userSessionData.getLanguage()){
+                        switch (userSessionData.getLanguage()) {
                             case RU -> messageText = "\uD83D\uDC68\u200D\uD83D\uDD2C Привет! Я <b>Лингвист.</b> Чем я могу тебе помочь?";
                             case UA -> messageText = "\uD83D\uDC68\u200D\uD83D\uDD2C Привіт! Я <b>Лінгвіст.</b> Чим я можу тобі допомогти?";
                             case EN -> messageText = "\uD83D\uDC68\u200D\uD83D\uDD2C Hello! I am <b>Linguist.</b> How can I help you?";
@@ -1075,14 +1269,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case CHOOSE_POET_ROLE_CALLBACK_DATA -> {
+                    case ChooseCallback.CHOOSE_POET_ROLE_CALLBACK_DATA -> {
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -1093,7 +1287,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         String messageText = null;
 
-                        switch (userSessionData.getLanguage()){
+                        switch (userSessionData.getLanguage()) {
                             case RU -> messageText = "\uD83D\uDCDD Привет! Я <b>Поэт.</b> Чем я могу тебе помочь?";
                             case UA -> messageText = "\uD83D\uDCDD Привіт! Я <b>Поет.</b> Чим я можу тобі допомогти?";
                             case EN -> messageText = "\uD83D\uDCDD Hello! I am <b>Poet.</b> How can I help you?";
@@ -1108,14 +1302,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case CHOOSE_MONA_LISA_ROLE_CALLBACK_DATA -> {
+                    case ChooseCallback.CHOOSE_MONA_LISA_ROLE_CALLBACK_DATA -> {
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -1126,7 +1320,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         String messageText = null;
 
-                        switch (userSessionData.getLanguage()){
+                        switch (userSessionData.getLanguage()) {
                             case RU -> messageText = "\uD83D\uDDBC\uFE0F Привет! Я <b>Мона Лиза.</b> Чем я могу тебе помочь?";
                             case UA -> messageText = "\uD83D\uDDBC\uFE0F Привіт! Я <b>Мона Лиза.</b> Чим я можу тобі допомогти?";
                             case EN -> messageText = "\uD83D\uDDBC\uFE0F Hello! I am <b>Mona Liza.</b> How can I help you?";
@@ -1141,14 +1335,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case CHOOSE_EINSTEIN_ROLE_CALLBACK_DATA -> {
+                    case ChooseCallback.CHOOSE_EINSTEIN_ROLE_CALLBACK_DATA -> {
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -1159,7 +1353,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         String messageText = null;
 
-                        switch (userSessionData.getLanguage()){
+                        switch (userSessionData.getLanguage()) {
                             case RU -> messageText = "\uD83E\uDDE0 Привет! Я <b>Альберт Эйнштейн.</b> Чем я могу тебе помочь?";
                             case UA -> messageText = "\uD83E\uDDE0 Привіт! Я <b>Альберт Ейнштейн.</b> Чим я можу тобі допомогти?";
                             case EN -> messageText = "\uD83E\uDDE0 Hello! I am <b>Albert Einstein.</b> How can I help you?";
@@ -1174,14 +1368,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case CHOOSE_BULLY_ROLE_CALLBACK_DATA -> {
+                    case ChooseCallback.CHOOSE_BULLY_ROLE_CALLBACK_DATA -> {
                         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-                        if (userSessionData == null){
+                        if (userSessionData == null) {
                             userSessionData = getDefUserSessionData();
                         }
 
@@ -1192,7 +1386,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         String messageText = null;
 
-                        switch (userSessionData.getLanguage()){
+                        switch (userSessionData.getLanguage()) {
                             case RU -> messageText = "\uD83E\uDD2C Чё каво нахуй! Я <b>Гопник.</b> Задавать вопросы будешь блять?";
                             case UA -> messageText = "\uD83E\uDD2C Че каво нахуй! Я <b>Гопник.</b> Задавати питання будеш блять?";
                             case EN -> messageText = "\uD83E\uDD2C What the fuck! I am <b>Bully.</b> Are you going to fucking ask questions?";
@@ -1207,26 +1401,26 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
 
-                    case STAT_CALLBACK_DATA -> {
+                    case AdminCallback.STAT_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         editStatMessage(user, chatId, messageId);
                     }
 
-                    case BACK_ADMIN_CALLBACK_DATA -> {
+                    case BackCallback.BACK_ADMIN_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         editAdminMessage(user, chatId, messageId);
                     }
-                    case GIVE_SUBSCRIBE_CALLBACK_DATA -> {
+                    case AdminCallback.GIVE_SUBSCRIBE_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
-                        if (!user.getRole().equals(UserRole.ADMIN)){
+                        if (!user.getRole().equals(UserRole.ADMIN)) {
                             EditMessageText editMessage = EditMessageText.builder()
                                     .chatId(chatId)
                                     .messageId(messageId)
@@ -1236,7 +1430,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                             try {
                                 execute(editMessage);
-                            } catch (TelegramApiException e){
+                            } catch (TelegramApiException e) {
                                 e.printStackTrace();
                             }
                             return;
@@ -1247,7 +1441,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                         InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                .callbackData(BACK_ADMIN_GIVE_SUBSCRIBE_CALLBACK_DATA)
+                                .callbackData(BackCallback.BACK_ADMIN_GIVE_SUBSCRIBE_CALLBACK_DATA)
                                 .text("\uD83D\uDD19 Назад")
                                 .build();
 
@@ -1271,14 +1465,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case TAKE_SUBSCRIBE_CALLBACK_DATA -> {
+                    case AdminCallback.TAKE_SUBSCRIBE_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
-                        if (!user.getRole().equals(UserRole.ADMIN)){
+                        if (!user.getRole().equals(UserRole.ADMIN)) {
                             EditMessageText editMessage = EditMessageText.builder()
                                     .chatId(chatId)
                                     .messageId(messageId)
@@ -1288,7 +1482,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                             try {
                                 execute(editMessage);
-                            } catch (TelegramApiException e){
+                            } catch (TelegramApiException e) {
                                 e.printStackTrace();
                             }
                             return;
@@ -1299,7 +1493,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                         InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                .callbackData(BACK_ADMIN_TAKE_SUBSCRIBE_CALLBACK_DATA)
+                                .callbackData(BackCallback.BACK_ADMIN_TAKE_SUBSCRIBE_CALLBACK_DATA)
                                 .text("\uD83D\uDD19 Назад")
                                 .build();
 
@@ -1323,14 +1517,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case BAN_USER_CALLBACK_DATA -> {
+                    case AdminCallback.BAN_USER_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
-                        if (!user.getRole().equals(UserRole.ADMIN)){
+                        if (!user.getRole().equals(UserRole.ADMIN)) {
                             EditMessageText editMessage = EditMessageText.builder()
                                     .chatId(chatId)
                                     .messageId(messageId)
@@ -1340,7 +1534,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                             try {
                                 execute(editMessage);
-                            } catch (TelegramApiException e){
+                            } catch (TelegramApiException e) {
                                 e.printStackTrace();
                             }
                             return;
@@ -1350,7 +1544,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                         InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                .callbackData(BACK_ADMIN_BAN_USER_CALLBACK_DATA)
+                                .callbackData(BackCallback.BACK_ADMIN_BAN_USER_CALLBACK_DATA)
                                 .text("\uD83D\uDD19 Назад")
                                 .build();
 
@@ -1374,15 +1568,15 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
 
-                    case UNBAN_USER_CALLBACK_DATA -> {
+                    case AdminCallback.UNBAN_USER_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
-                        if (!user.getRole().equals(UserRole.ADMIN)){
+                        if (!user.getRole().equals(UserRole.ADMIN)) {
                             EditMessageText editMessage = EditMessageText.builder()
                                     .chatId(chatId)
                                     .messageId(messageId)
@@ -1392,7 +1586,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                             try {
                                 execute(editMessage);
-                            } catch (TelegramApiException e){
+                            } catch (TelegramApiException e) {
                                 e.printStackTrace();
                             }
                             return;
@@ -1403,7 +1597,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
                         InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                                .callbackData(BACK_ADMIN_UNBAN_USER_CALLBACK_DATA)
+                                .callbackData(BackCallback.BACK_ADMIN_UNBAN_USER_CALLBACK_DATA)
                                 .text("\uD83D\uDD19 Назад")
                                 .build();
 
@@ -1427,50 +1621,292 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         try {
                             execute(editMessage);
-                        } catch (TelegramApiException e){
+                        } catch (TelegramApiException e) {
                             e.printStackTrace();
                         }
                     }
-                    case ALL_USERS_DATA_CALLBACK_DATA -> {
+                    case AdminCallback.ALL_USERS_DATA_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         handleAllUserDataMessage(user, chatId, messageId);
                     }
 
-                    case BACK_ADMIN_GIVE_SUBSCRIBE_CALLBACK_DATA -> {
+                    case BackCallback.BACK_ADMIN_GIVE_SUBSCRIBE_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         giveSubscriptionSteps.remove(chatId);
 
                         editAdminMessage(user, chatId, messageId);
                     }
-                    case BACK_ADMIN_TAKE_SUBSCRIBE_CALLBACK_DATA -> {
+                    case BackCallback.BACK_ADMIN_TAKE_SUBSCRIBE_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         takeSubscriptionSteps.remove(chatId);
 
                         editAdminMessage(user, chatId, messageId);
                     }
-                    case BACK_ADMIN_BAN_USER_CALLBACK_DATA -> {
+                    case BackCallback.BACK_ADMIN_BAN_USER_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         banUserSteps.remove(chatId);
 
                         editAdminMessage(user, chatId, messageId);
                     }
-                    case BACK_ADMIN_UNBAN_USER_CALLBACK_DATA -> {
+                    case BackCallback.BACK_ADMIN_UNBAN_USER_CALLBACK_DATA -> {
                         User user = userService.getByTelegramChatId(chatId);
 
                         unbanUserSteps.remove(chatId);
 
                         editAdminMessage(user, chatId, messageId);
                     }
+                    case BackCallback.BACK_ADMIN_GIVE_ADMIN_CALLBACK_DATA-> {
+                        User user = userService.getByTelegramChatId(chatId);
+
+                        giveAdminSteps.remove(chatId);
+
+                        editAdminMessage(user, chatId, messageId);
+                    }
+                    case BackCallback.BACK_ADMIN_TAKE_ADMIN_CALLBACK_DATA-> {
+                        User user = userService.getByTelegramChatId(chatId);
+
+                        takeAdminSteps.remove(chatId);
+
+                        editAdminMessage(user, chatId, messageId);
+                    }
+                    case ChangeModelCallback.CHANGE_MODEL_CHAT_GPT_THREE_FIVE_CALLBACK_DATA -> {
+                        UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
+
+                        if (userSessionData == null) {
+                            userSessionData = getDefUserSessionData();
+                        }
+
+                        userSessionData.setModel("gpt-3.5-turbo");
+                        userSessionData.setMessageHistory(new HashMap<>());
+
+                        usersSessionsDataMap.put(chatId, userSessionData);
+
+                        String editMessageText = null;
+
+                        switch (userSessionData.getLanguage()) {
+                            case RU -> editMessageText = "\uD83D\uDC7D Вы успешно изменили модель на <b>ChatGPT 3.5 Turbo</b>";
+                            case EN -> editMessageText = "\uD83D\uDC7D You have successfully changed the model to <b>ChatGPT 3.5 Turbo</b>";
+                            case UA -> editMessageText = "\uD83D\uDC7D Ви успішно змінили модель на <b>ChatGPT 3.5 Turbo</b>";
+                        }
+
+                        EditMessageText editMessage = EditMessageText.builder()
+                                .text(editMessageText)
+                                .messageId(messageId)
+                                .chatId(chatId)
+                                .parseMode("html")
+                                .build();
+
+                        try {
+                            execute(editMessage);
+                        } catch (TelegramApiException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    case ChangeModelCallback.CHANGE_MODEL_CHAT_GPT_FOUR_CALLBACK_DATA -> {
+                        User user = userService.getByTelegramChatId(chatId);
+
+                        if (user.getUserData().getSubscription() == null) {
+                            deleteMessage(messageId, chatId);
+                            handlePayMessage(chatId);
+                            return;
+                        }
+
+                        UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
+
+                        if (userSessionData == null) {
+                            userSessionData = getDefUserSessionData();
+                        }
+
+                        userSessionData.setModel("gpt-4");
+                        userSessionData.setMessageHistory(new HashMap<>());
+
+                        usersSessionsDataMap.put(chatId, userSessionData);
+
+                        String editMessageText = null;
+
+                        switch (userSessionData.getLanguage()) {
+                            case RU -> editMessageText = "\uD83E\uDD16 Вы успешно изменили модель на <b>ChatGPT 4</b>";
+                            case EN -> editMessageText = "\uD83E\uDD16 You have successfully changed the model to <b>ChatGPT 4</b>";
+                            case UA -> editMessageText = "\uD83E\uDD16 Ви успішно змінили модель на <b>ChatGPT 4</b>";
+                        }
+
+                        EditMessageText editMessage = EditMessageText.builder()
+                                .text(editMessageText)
+                                .messageId(messageId)
+                                .chatId(chatId)
+                                .parseMode("html")
+                                .build();
+
+                        try {
+                            execute(editMessage);
+                        } catch (TelegramApiException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    case ChangeModelCallback.CHANGE_MODEL_CHAT_GPT_FOUR_TURBO_CALLBACK_DATA -> {
+                        User user = userService.getByTelegramChatId(chatId);
+
+                        if (user.getUserData().getSubscription() == null) {
+                            deleteMessage(messageId, chatId);
+                            handlePayMessage(chatId);
+                            return;
+                        }
+
+                        UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
+
+                        if (userSessionData == null) {
+                            userSessionData = getDefUserSessionData();
+                        }
+
+                        userSessionData.setModel("gpt-4-1106-preview");
+                        userSessionData.setMessageHistory(new HashMap<>());
+
+                        usersSessionsDataMap.put(chatId, userSessionData);
+
+                        String editMessageText = null;
+
+                        switch (userSessionData.getLanguage()) {
+                            case RU -> editMessageText = "\uD83D\uDC7E Вы успешно изменили модель на <b>ChatGPT 4 Turbo</b>";
+                            case EN -> editMessageText = "\uD83D\uDC7E You have successfully changed the model to <b>ChatGPT 4 Turbo</b>";
+                            case UA -> editMessageText = "\uD83D\uDC7E Ви успішно змінили модель на <b>ChatGPT 4 Turbo</b>";
+                        }
+
+                        EditMessageText editMessage = EditMessageText.builder()
+                                .text(editMessageText)
+                                .messageId(messageId)
+                                .chatId(chatId)
+                                .parseMode("html")
+                                .build();
+
+                        try {
+                            execute(editMessage);
+                        } catch (TelegramApiException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    case AdminCallback.GIVE_ADMIN_CALLBACK_DATA -> {
+                        User user = userService.getByTelegramChatId(chatId);
+
+                        if (!user.getRole().equals(UserRole.ADMIN)) {
+                            EditMessageText editMessage = EditMessageText.builder()
+                                    .chatId(chatId)
+                                    .messageId(messageId)
+                                    .text("\uD83D\uDEAB <b>У вас не хватает прав</b>")
+                                    .parseMode("html")
+                                    .build();
+
+                            try {
+                                execute(editMessage);
+                            } catch (TelegramApiException e) {
+                                e.printStackTrace();
+                            }
+                            return;
+                        }
+
+                        giveAdminSteps.add(chatId);
+
+                        InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
+
+                        InlineKeyboardButton backButton = InlineKeyboardButton.builder()
+                                .callbackData(BackCallback.BACK_ADMIN_GIVE_ADMIN_CALLBACK_DATA)
+                                .text("\uD83D\uDD19 Назад")
+                                .build();
+
+                        List<InlineKeyboardButton> keyboardButtonsRow1 = new ArrayList<>();
+
+                        keyboardButtonsRow1.add(backButton);
+
+                        List<List<InlineKeyboardButton>> rowList = new ArrayList<>();
+
+                        rowList.add(keyboardButtonsRow1);
+
+                        inlineKeyboardMarkup.setKeyboard(rowList);
+
+                        EditMessageText editMessage = EditMessageText.builder()
+                                .chatId(chatId)
+                                .messageId(messageId)
+                                .replyMarkup(inlineKeyboardMarkup)
+                                .text("\uD83D\uDC71\u200D♂\uFE0F <b>Введите идентификатор пользователя для того, чтобы выдать права администратора</b>")
+                                .parseMode("html")
+                                .build();
+
+                        try {
+                            execute(editMessage);
+                        } catch (TelegramApiException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    case AdminCallback.TAKE_ADMIN_CALLBACK_DATA -> {
+                        User user = userService.getByTelegramChatId(chatId);
+
+                        if (!user.getRole().equals(UserRole.ADMIN)) {
+                            EditMessageText editMessage = EditMessageText.builder()
+                                    .chatId(chatId)
+                                    .messageId(messageId)
+                                    .text("\uD83D\uDEAB <b>У вас не хватает прав</b>")
+                                    .parseMode("html")
+                                    .build();
+
+                            try {
+                                execute(editMessage);
+                            } catch (TelegramApiException e) {
+                                e.printStackTrace();
+                            }
+                            return;
+                        }
+
+                        takeAdminSteps.add(chatId);
+
+                        InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
+
+                        InlineKeyboardButton backButton = InlineKeyboardButton.builder()
+                                .callbackData(BackCallback.BACK_ADMIN_TAKE_ADMIN_CALLBACK_DATA)
+                                .text("\uD83D\uDD19 Назад")
+                                .build();
+
+                        List<InlineKeyboardButton> keyboardButtonsRow1 = new ArrayList<>();
+
+                        keyboardButtonsRow1.add(backButton);
+
+                        List<List<InlineKeyboardButton>> rowList = new ArrayList<>();
+
+                        rowList.add(keyboardButtonsRow1);
+
+                        inlineKeyboardMarkup.setKeyboard(rowList);
+
+                        EditMessageText editMessage = EditMessageText.builder()
+                                .chatId(chatId)
+                                .messageId(messageId)
+                                .replyMarkup(inlineKeyboardMarkup)
+                                .text("\uD83D\uDC71\u200D♂\uFE0F <b>Введите идентификатор пользователя для того, чтобы забрать права администратора</b>")
+                                .parseMode("html")
+                                .build();
+
+                        try {
+                            execute(editMessage);
+                        } catch (TelegramApiException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    case PaymentCallback.PAYMENT_THIRTY_CALLBACK_DATA -> {
+
+                    }
+                    case PaymentCallback.PAYMENT_SEVEN_CALLBACK_DATA -> {
+
+                    }
+                    case PaymentCallback.PAYMENT_NINETY_CALLBACK_DATA -> {
+
+                    }
                 }
             }
         }).start();
     }
 
-    private void sendUnsubscribedMessage(long chatId){
+    private void sendUnsubscribedMessage(long chatId) {
         SendMessage sendMessage = new SendMessage();
 
         sendMessage.setChatId(chatId);
@@ -1479,7 +1915,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
         UserSessionDataLanguage userSessionDataLanguage;
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionDataLanguage = UserSessionDataLanguage.RU;
         } else {
             userSessionDataLanguage = userSessionData.getLanguage();
@@ -1488,7 +1924,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         String messageText = null;
         String readyButtonText = null;
 
-        switch (userSessionDataLanguage){
+        switch (userSessionDataLanguage) {
             case RU -> {
                 messageText = "<b>Дорогой пользователь</b>\uD83E\uDDBE \n\nДля использования бота подпишись, пожалуйста, на наш канал:";
                 readyButtonText = "Готово ✓";
@@ -1507,13 +1943,13 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton groupButton = InlineKeyboardButton.builder()
-                .text("Geva IT be | Технологии, ИИ")
-                .url("https://t.me/+q2dEUDcWVrZkZWU6")
+                .text(botProperty.getChannelName())
+                .url(botProperty.getChannelLink())
                 .build();
 
         InlineKeyboardButton readyButton = InlineKeyboardButton.builder()
                 .text(readyButtonText)
-                .callbackData(READY_SUBSCRIBED_CALLBACK_DATA)
+                .callbackData(ProfileCallback.READY_SUBSCRIBED_CALLBACK_DATA)
                 .build();
 
         List<InlineKeyboardButton> keyboardButtonsRow1 = new ArrayList<>();
@@ -1533,11 +1969,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(sendMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
-    private void deleteMessage(int messageId, long chatId){
+
+    private void deleteMessage(int messageId, long chatId) {
         DeleteMessage deleteMessage = DeleteMessage.builder()
                 .messageId(messageId)
                 .chatId(chatId)
@@ -1545,16 +1982,16 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(deleteMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
 
-    private void sendSuccessSubscribeMessage(User user, long chatId){
+    private void sendSuccessSubscribeMessage(User user, long chatId) {
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
         UserSessionDataLanguage userSessionDataLanguage;
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionDataLanguage = UserSessionDataLanguage.RU;
         } else {
             userSessionDataLanguage = userSessionData.getLanguage();
@@ -1562,88 +1999,31 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         String messageText = null;
 
-        String profileButtonText = null;
-        String refreshButtonText = null;
-        String roleButtonText = null;
-        String cardButtonText = null;
-
-        switch (userSessionDataLanguage){
+        switch (userSessionDataLanguage) {
             case RU -> {
                 messageText = "<b>Задай свой вопрос или отправьте мне голосовое сообщение.</b>\n\n<i>Больше информации о ChatGPT в разделе \"\uD83D\uDC64 Профиль\".</i>";
-
-                profileButtonText = "\uD83D\uDC64 Профиль";
-                refreshButtonText = "\uD83D\uDD04 Сбросить контекст";
-                roleButtonText = "\uD83C\uDFAD Выбрать роль";
-                cardButtonText = "\uD83D\uDCB3 Подписка";
             }
             case EN -> {
                 messageText = "<b>Ask your question or send me a voicemail.</b>\n\n<i>More information about ChatGPT in the \"\uD83D\uDC64 Profile\" section.</i>";
-
-                profileButtonText = "\uD83D\uDC64 Profile";
-                refreshButtonText = "\uD83D\uDD04 Drop chat context";
-                roleButtonText = "\uD83C\uDFAD Choose a role";
-                cardButtonText = "\uD83D\uDCB3 Subscription";
             }
-            case UA -> {
-                messageText = "<b>Постав своє запитання або надішліть мені голосове повідомлення.</b>\n\n<i>Більше інформації про ChatGPT у розділі \"\uD83D\uDC64 Профіль\".</i>";
-
-                profileButtonText = "\uD83D\uDC64 Профіль";
-                refreshButtonText = "\uD83D\uDD04 Скинути контекст";
-                roleButtonText = "\uD83C\uDFAD Вибрати роль";
-                cardButtonText = "\uD83D\uDCB3 Пiдписка";
-            }
+            case UA -> messageText = "<b>Постав своє запитання або надішліть мені голосове повідомлення.</b>\n\n<i>Більше інформації про ChatGPT у розділі \"\uD83D\uDC64 Профіль\".</i>";
         }
-        ReplyKeyboardMarkup keyboardMarkup = new ReplyKeyboardMarkup();
-        keyboardMarkup.setSelective(true);
-        keyboardMarkup.setResizeKeyboard(true);
-        keyboardMarkup.setOneTimeKeyboard(false);
-
-        KeyboardButton profileButton = new KeyboardButton(profileButtonText);
-        KeyboardButton refreshButton = new KeyboardButton(refreshButtonText);
-        KeyboardButton roleButton = new KeyboardButton(roleButtonText);
-        KeyboardButton cardButton = new KeyboardButton(cardButtonText);
-
-        KeyboardRow keyboardRow1 = new KeyboardRow();
-        KeyboardRow keyboardRow2 = new KeyboardRow();
-
-        keyboardRow1.add(profileButton);
-        keyboardRow1.add(refreshButton);
-
-        keyboardRow2.add(roleButton);
-        keyboardRow2.add(cardButton);
-
-        List<KeyboardRow> keyboardRows = new ArrayList<>();
-
-        keyboardRows.add(keyboardRow1);
-        keyboardRows.add(keyboardRow2);
-
-        if (user.getRole().equals(UserRole.ADMIN)){
-            KeyboardButton adminButton = new KeyboardButton("\uD83D\uDED1 Админ-панель");
-
-            KeyboardRow keyboardRow3 = new KeyboardRow();
-
-            keyboardRow3.add(adminButton);
-
-            keyboardRows.add(keyboardRow3);
-        }
-
-        keyboardMarkup.setKeyboard(keyboardRows);
 
         SendMessage sendMessage = SendMessage.builder()
                 .text(messageText)
                 .chatId(chatId)
-                .replyMarkup(keyboardMarkup)
+                .replyMarkup(getMainReplyKeyboardMarkup(userSessionDataLanguage, user))
                 .parseMode("html")
                 .build();
 
         try {
             execute(sendMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
 
-    public void handleStartMessage(long chatId){
+    public void handleStartMessage(long chatId) {
         InputStream videoStream = getClass().getClassLoader().getResourceAsStream("ezgif-3-55625e136a.gif");
 
         InputFile videoInputFile = new InputFile(videoStream, "ezgif-3-55625e136a.gif");
@@ -1657,17 +2037,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton ruButton = InlineKeyboardButton.builder()
-                .callbackData(SELECT_RU_LANGUAGE_CALLBACK_DATA)
+                .callbackData(SelectLanguageCallback.SELECT_RU_LANGUAGE_CALLBACK_DATA)
                 .text("\uD83C\uDDF7\uD83C\uDDFA RU")
                 .build();
 
         InlineKeyboardButton uaButton = InlineKeyboardButton.builder()
-                .callbackData(SELECT_UA_LANGUAGE_CALLBACK_DATA)
+                .callbackData(SelectLanguageCallback.SELECT_UA_LANGUAGE_CALLBACK_DATA)
                 .text("\uD83C\uDDFA\uD83C\uDDE6 UA")
                 .build();
 
         InlineKeyboardButton enButton = InlineKeyboardButton.builder()
-                .callbackData(SELECT_EN_LANGUAGE_CALLBACK_DATA)
+                .callbackData(SelectLanguageCallback.SELECT_EN_LANGUAGE_CALLBACK_DATA)
                 .text("\uD83C\uDDEC\uD83C\uDDE7 EN")
                 .build();
 
@@ -1688,19 +2068,19 @@ public class TelegramBotService extends TelegramLongPollingBot {
         try {
             execute(sendVideo);
             videoStream.close();
-        } catch (TelegramApiException | IOException e){
+        } catch (TelegramApiException | IOException e) {
             e.printStackTrace();
         }
 
 
     }
 
-    public void handleProfileMessage(User user, long chatId){
+    public void handleProfileMessage(User user, long chatId) {
         int availableRequests = user.getUserData().getAvailableRequests();
         boolean hasSubscribe = user.getUserData().getSubscription() != null;
         String subscribeDateString = null;
 
-        if (hasSubscribe){
+        if (hasSubscribe) {
             Date subscribeDate = new Date(user.getUserData().getSubscription().getExpiration());
 
             SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy");
@@ -1711,7 +2091,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
         UserSessionDataLanguage userSessionDataLanguage;
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionDataLanguage = UserSessionDataLanguage.RU;
         } else {
             userSessionDataLanguage = userSessionData.getLanguage();
@@ -1723,7 +2103,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         String inviteFriendButtonText = null;
         String changeLanguageButtonText = null;
 
-        switch (userSessionDataLanguage){
+        switch (userSessionDataLanguage) {
             case RU -> {
                 String preMessage = hasSubscribe ?
                         "\uD83D\uDCAC <b>Доступные запросы для ChatGPT: ∞ (Подписка истекает " + subscribeDateString + ")</b>\n\n"
@@ -1737,7 +2117,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         + "<b>Недостаточно запросов ChatGPT?</b>\n\n"
                         + "▫\uFE0F Вы можете приобрести подписку ChatGPT и не беспокоиться о лимитах;\n" +
                         "▫\uFE0F Пригласите друга и получите за него 5 запросов ChatGPT.\n\n"
-                        + "<b><i>Как правильно общаться с ChatGPT –</i></b> https://telegra.ph/Gajd-Kak-sostavit-horoshij-zapros-v-ChatGPT-s-primerami-07-16";
+                        + "<b><i>Как правильно общаться с ChatGPT –</i></b> https://telegra.ph/Gajd-GevaGPT-Kak-sostavit-horoshij-zapros-v-ChatGPT-11-27";
 
                 buySubscriptionButtonText = "\uD83D\uDE80 Купить подписку";
                 inviteFriendButtonText = "\uD83D\uDC65 Пригласить друга";
@@ -1757,7 +2137,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         + "<b>Недостатньо запитів ChatGPT?</b>\n\n"
                         + "▫\uFE0F Ви можете придбати підписку ChatGPT і не турбуватися про ліміти;\n" +
                         "▫\uFE0F Запросіть друга і отримайте за нього 5 запитів ChatGPT.\n\n"
-                        + "<b><i>Як правильно спілкуватися з ChatGPT –</i></b> https://telegra.ph/Gajd-Kak-sostavit-horoshij-zapros-v-ChatGPT-s-primerami-07-16";
+                        + "<b><i>Як правильно спілкуватися з ChatGPT –</i></b> https://telegra.ph/Gajd-GevaGPT-Kak-sostavit-horoshij-zapros-v-ChatGPT-11-27";
 
                 buySubscriptionButtonText = "\uD83D\uDE80 Купити пiдписку";
                 inviteFriendButtonText = "\uD83D\uDC65 Запросiть друга";
@@ -1777,7 +2157,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         + "<b>Not enough ChatGPT requests?</b>\n\n"
                         + "▫\uFE0F You can purchase a ChatGPT subscription and not worry about limits;\n" +
                         "▫\uFE0F Invite a friend and get 5 ChatGPT requests for him.\n\n"
-                        + "<b><i>How to properly communicate with ChatGPT –</i></b> https://telegra.ph/Let-IT-be-Guide-How-to-make-a-good-request-to-ChatGPT-with-examples-09-05";
+                        + "<b><i>How to properly communicate with ChatGPT –</i></b> https://telegra.ph/GevaGPT-Guide-How-to-write-a-ChatGPT-application-correctly-11-27";
 
                 buySubscriptionButtonText = "\uD83D\uDE80 Buy a subscription";
                 inviteFriendButtonText = "\uD83D\uDC65 Invite a friend";
@@ -1788,17 +2168,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton buySubscriptionButton = InlineKeyboardButton.builder()
-                .callbackData(BUY_SUBSCRIPTION_CALLBACK_DATA)
+                .callbackData(ProfileCallback.BUY_SUBSCRIPTION_CALLBACK_DATA)
                 .text(buySubscriptionButtonText)
                 .build();
 
         InlineKeyboardButton inviteFriendButton = InlineKeyboardButton.builder()
-                .callbackData(INVITE_FRIEND_CALLBACK_DATA)
+                .callbackData(ProfileCallback.INVITE_FRIEND_CALLBACK_DATA)
                 .text(inviteFriendButtonText)
                 .build();
 
         InlineKeyboardButton changeLanguageButton = InlineKeyboardButton.builder()
-                .callbackData(CHANGE_LANGUAGE_CALLBACK_DATA)
+                .callbackData(ProfileCallback.CHANGE_LANGUAGE_CALLBACK_DATA)
                 .text(changeLanguageButtonText)
                 .build();
 
@@ -1828,17 +2208,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(sendMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
 
-    public void editProfileMessage(User user, int messageId, long chatId){
+    public void editProfileMessage(User user, int messageId, long chatId) {
         int availableRequests = user.getUserData().getAvailableRequests();
         boolean hasSubscribe = user.getUserData().getSubscription() != null;
         String subscribeDateString = null;
 
-        if (hasSubscribe){
+        if (hasSubscribe) {
             Date subscribeDate = new Date(user.getUserData().getSubscription().getExpiration());
 
             SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy");
@@ -1849,7 +2229,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
         UserSessionDataLanguage userSessionDataLanguage;
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionDataLanguage = UserSessionDataLanguage.RU;
         } else {
             userSessionDataLanguage = userSessionData.getLanguage();
@@ -1861,7 +2241,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         String inviteFriendButtonText = null;
         String changeLanguageButtonText = null;
 
-        switch (userSessionDataLanguage){
+        switch (userSessionDataLanguage) {
             case RU -> {
                 String preMessage = hasSubscribe ?
                         "\uD83D\uDCAC <b>Доступные запросы для ChatGPT: ∞ (Подписка истекает " + subscribeDateString + ")</b>\n\n"
@@ -1875,7 +2255,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         + "<b>Недостаточно запросов ChatGPT?</b>\n\n"
                         + "▫\uFE0F Вы можете приобрести подписку ChatGPT и не беспокоиться о лимитах;\n" +
                         "▫\uFE0F Пригласите друга и получите за него 5 запросов ChatGPT.\n\n"
-                        + "<b><i>Как правильно общаться с ChatGPT –</i></b> https://telegra.ph/Gajd-Kak-sostavit-horoshij-zapros-v-ChatGPT-s-primerami-07-16";
+                        + "<b><i>Как правильно общаться с ChatGPT –</i></b> https://telegra.ph/Gajd-GevaGPT-Kak-sostavit-horoshij-zapros-v-ChatGPT-11-27";
 
                 buySubscriptionButtonText = "\uD83D\uDE80 Купить подписку";
                 inviteFriendButtonText = "\uD83D\uDC65 Пригласить друга";
@@ -1895,7 +2275,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         + "<b>Недостатньо запитів ChatGPT?</b>\n\n"
                         + "▫\uFE0F Ви можете придбати підписку ChatGPT і не турбуватися про ліміти;\n" +
                         "▫\uFE0F Запросіть друга і отримайте за нього 5 запитів ChatGPT.\n\n"
-                        + "<b><i>Як правильно спілкуватися з ChatGPT –</i></b> https://telegra.ph/Gajd-Kak-sostavit-horoshij-zapros-v-ChatGPT-s-primerami-07-16";
+                        + "<b><i>Як правильно спілкуватися з ChatGPT –</i></b> https://telegra.ph/Gajd-GevaGPT-Kak-sostavit-horoshij-zapros-v-ChatGPT-11-27";
 
                 buySubscriptionButtonText = "\uD83D\uDE80 Купити пiдписку";
                 inviteFriendButtonText = "\uD83D\uDC65 Запросiть друга";
@@ -1915,7 +2295,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         + "<b>Not enough ChatGPT requests?</b>\n\n"
                         + "▫\uFE0F You can purchase a ChatGPT subscription and not worry about limits;\n" +
                         "▫\uFE0F Invite a friend and get 5 ChatGPT requests for him.\n\n"
-                        + "<b><i>How to properly communicate with ChatGPT –</i></b> https://telegra.ph/Let-IT-be-Guide-How-to-make-a-good-request-to-ChatGPT-with-examples-09-05";
+                        + "<b><i>How to properly communicate with ChatGPT –</i></b> https://telegra.ph/GevaGPT-Guide-How-to-write-a-ChatGPT-application-correctly-11-27";
 
                 buySubscriptionButtonText = "\uD83D\uDE80 Buy a subscription";
                 inviteFriendButtonText = "\uD83D\uDC65 Invite a friend";
@@ -1926,17 +2306,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton buySubscriptionButton = InlineKeyboardButton.builder()
-                .callbackData(BUY_SUBSCRIPTION_CALLBACK_DATA)
+                .callbackData(ProfileCallback.BUY_SUBSCRIPTION_CALLBACK_DATA)
                 .text(buySubscriptionButtonText)
                 .build();
 
         InlineKeyboardButton inviteFriendButton = InlineKeyboardButton.builder()
-                .callbackData(INVITE_FRIEND_CALLBACK_DATA)
+                .callbackData(ProfileCallback.INVITE_FRIEND_CALLBACK_DATA)
                 .text(inviteFriendButtonText)
                 .build();
 
         InlineKeyboardButton changeLanguageButton = InlineKeyboardButton.builder()
-                .callbackData(CHANGE_LANGUAGE_CALLBACK_DATA)
+                .callbackData(ProfileCallback.CHANGE_LANGUAGE_CALLBACK_DATA)
                 .text(changeLanguageButtonText)
                 .build();
 
@@ -1967,18 +2347,18 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(editMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
 
-    private void editInviteFriendMessage(User user, int messageId, long chatId, long userId){
+    private void editInviteFriendMessage(User user, int messageId, long chatId, long userId) {
         int invited = user.getUserData().getInvited();
 
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
         UserSessionDataLanguage userSessionDataLanguage;
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionDataLanguage = UserSessionDataLanguage.RU;
         } else {
             userSessionDataLanguage = userSessionData.getLanguage();
@@ -2017,7 +2397,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton backProfileButton = InlineKeyboardButton.builder()
-                .callbackData(BACK_PROFILE_MESSAGE_CALLBACK_DATA)
+                .callbackData(BackCallback.BACK_PROFILE_MESSAGE_CALLBACK_DATA)
                 .text(backButtonText)
                 .build();
 
@@ -2042,16 +2422,16 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(editMessageText);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
 
-    private void handlePayMessage(long chatId){
+    private void handlePayMessage(long chatId) {
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
         UserSessionDataLanguage userSessionDataLanguage;
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionDataLanguage = UserSessionDataLanguage.RU;
         } else {
             userSessionDataLanguage = userSessionData.getLanguage();
@@ -2063,59 +2443,64 @@ public class TelegramBotService extends TelegramLongPollingBot {
         String thirtyButtonText = null;
         String ninetyButtonText = null;
 
-        switch (userSessionDataLanguage){
+        switch (userSessionDataLanguage) {
             case RU -> {
                 messageText = "<b>Что дает подписка:</b>\n\n"
                         + "▫\uFE0F Отсутствие рекламы;\n"
                         + "▫\uFE0F GPT-3.5 — безлимитное количество запросов;\n"
+                        + "▫\uFE0F GPT-4 — безлимитное количество запросов;\n"
+                        + "▫\uFE0F GPT-4 Turbo — безлимитное количество запросов;\n"
                         + "▫\uFE0F Приоритетная обработка запросов;\n"
                         + "▫\uFE0F Доступ к новым версиям СhatGPT.";
 
                 sevenDaysButtonText = "\uD83D\uDCC5 Безлимит на 7 дней - 199 ₽";
-                thirtyButtonText = "\uD83D\uDCC5 Безлимит на 30 дней - 449 ₽";
-                ninetyButtonText = "\uD83D\uDCC5 Безлимит на 90 дней - 1199 ₽";
+                thirtyButtonText = "\uD83D\uDCC5 Безлимит на 30 дней - 399 ₽";
+                ninetyButtonText = "\uD83D\uDCC5 Безлимит на 90 дней - 899 ₽";
             }
 
             case UA -> {
                 messageText = "<b>Що дає підписка:</b>\n\n"
                         + "▫\uFE0F Відсутність реклами;\n"
-                        + "▫\uFE0F GPT-3.5-безлімітна кількість запитів;\n"
+                        + "▫\uFE0F GPT-3.5 — безлімітна кількість запитів;\n"
+                        + "▫\uFE0F GPT-4 — безлімітна кількість запитів;\n"
+                        + "▫\uFE0F GPT-4 Turbo — безлімітна кількість запитів;\n"
                         + "▫\uFE0F Пріоритетна обробка запитів;\n"
                         + "▫\uFE0F Доступ до нових версій СhatGPT.";
 
-                sevenDaysButtonText = "\uD83D\uDCC5 Безлiмiт на 7 днiв - 7 $";
-                thirtyButtonText = "\uD83D\uDCC5 Безлiмiт на 30 днiв - 20 $";
-                ninetyButtonText = "\uD83D\uDCC5 Безлiмiт на 90 днiв - 40 $";
+                sevenDaysButtonText = "\uD83D\uDCC5 Безлiмiт на 7 днiв - 2.2 $";
+                thirtyButtonText = "\uD83D\uDCC5 Безлiмiт на 30 днiв - 4.5 $";
+                ninetyButtonText = "\uD83D\uDCC5 Безлiмiт на 90 днiв - 10 $";
             }
 
             case EN -> {
                 messageText = "<b>What does a subscription give:</b>\n\n"
                         + "▫\uFE0F No advertising;\n"
                         + "▫\uFE0F GPT-3.5 — unlimited number of requests;\n"
+                        + "▫\uFE0F GPT-4 — unlimited number of requests;\n"
+                        + "▫\uFE0F GPT-4 Turbo — unlimited number of requests;\n"
                         + "▫\uFE0F Priority processing of requests;\n"
                         + "▫\uFE0F Access to new versions of ChatGPT.";
 
-                sevenDaysButtonText = "\uD83D\uDCC5 Unlimited for 7 days - 7 $";
-                thirtyButtonText = "\uD83D\uDCC5 Unlimited for 30 days - 20 $";
-                ninetyButtonText = "\uD83D\uDCC5 Unlimited for 90 days - 40 $";
+                sevenDaysButtonText = "\uD83D\uDCC5 Unlimited for 7 days - 2.2 $";
+                thirtyButtonText = "\uD83D\uDCC5 Unlimited for 30 days - 4.5 $";
+                ninetyButtonText = "\uD83D\uDCC5 Unlimited for 90 days - 10 $";
             }
         }
 
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton sevenButton = InlineKeyboardButton.builder()
-                .callbackData("dd")
+                .callbackData(PaymentCallback.PAYMENT_SEVEN_CALLBACK_DATA)
                 .text(sevenDaysButtonText)
                 .build();
 
-        //todo callbacks
         InlineKeyboardButton thirtyButton = InlineKeyboardButton.builder()
-                .callbackData("dd")
+                .callbackData(PaymentCallback.PAYMENT_THIRTY_CALLBACK_DATA)
                 .text(thirtyButtonText)
                 .build();
 
         InlineKeyboardButton ninetyButton = InlineKeyboardButton.builder()
-                .callbackData("dd")
+                .callbackData(PaymentCallback.PAYMENT_NINETY_CALLBACK_DATA)
                 .text(ninetyButtonText)
                 .build();
 
@@ -2150,15 +2535,16 @@ public class TelegramBotService extends TelegramLongPollingBot {
         try {
             execute(sendPhoto);
             photoStream.close();
-        } catch (TelegramApiException | IOException e){
+        } catch (TelegramApiException | IOException e) {
             e.printStackTrace();
         }
     }
-    private void handleSupportMessage(long userId, long chatId){
+
+    private void handleSupportMessage(long userId, long chatId) {
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
         UserSessionDataLanguage userSessionDataLanguage;
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionDataLanguage = UserSessionDataLanguage.RU;
         } else {
             userSessionDataLanguage = userSessionData.getLanguage();
@@ -2169,7 +2555,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         String techSupportButtonText = null;
         String adSupportButtonText = null;
 
-        switch (userSessionDataLanguage){
+        switch (userSessionDataLanguage) {
             case RU -> {
                 messageText = "\uD83D\uDEE0 При обращении в техническую поддержку, обязательно сообщите этот код: <code>#" + userId + "</code>";
 
@@ -2223,16 +2609,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(sendMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
-    public void createChatCompletion(User user, long chatId, String text){
+
+    public void createChatCompletion(User user, long chatId, String text) {
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
         String userSessionDataRoleText = null;
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionData = getDefUserSessionData();
         }
 
@@ -2243,7 +2630,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         String thirtyButtonText = null;
         String ninetyButtonText = null;
 
-        switch (userSessionData.getLanguage()){
+        switch (userSessionData.getLanguage()) {
             case RU -> {
                 insufficientBalanceImgPath = "ruinsuff.jpg";
                 typingText = "Печатает...";
@@ -2252,7 +2639,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 thirtyButtonText = "\uD83D\uDCC5 Безлимит на 30 дней - 449 ₽";
                 ninetyButtonText = "\uD83D\uDCC5 Безлимит на 90 дней - 1199 ₽";
 
-                switch (userSessionData.getRole()){
+                switch (userSessionData.getRole()) {
                     case POET -> userSessionDataRoleText = "Общайся в этом диалоге в роли - Поэта";
                     case BULLY -> userSessionDataRoleText = "Общайся в этом диалоге в роли - Русского Гопника";
                     case JOKER -> userSessionDataRoleText = "Общайся в этом диалоге в роли - Шутника";
@@ -2272,7 +2659,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 thirtyButtonText = "\uD83D\uDCC5 Unlimited for 30 days - 20 $";
                 ninetyButtonText = "\uD83D\uDCC5 Unlimited for 90 days - 40 $";
 
-                switch (userSessionData.getRole()){
+                switch (userSessionData.getRole()) {
                     case POET -> userSessionDataRoleText = "Communicate in this dialogue as - Poet";
                     case BULLY -> userSessionDataRoleText = "Communicate in this dialogue as - Bully";
                     case JOKER -> userSessionDataRoleText = "Communicate in this dialogue as - Joker";
@@ -2292,7 +2679,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 thirtyButtonText = "\uD83D\uDCC5 Безлiмiт на 30 днiв - 20 $";
                 ninetyButtonText = "\uD83D\uDCC5 Безлiмiт на 90 днiв - 40 $";
 
-                switch (userSessionData.getRole()){
+                switch (userSessionData.getRole()) {
                     case POET -> userSessionDataRoleText = "Спілкуйся в цьому діалозі в ролі - Поета";
                     case BULLY -> userSessionDataRoleText = "Спілкуйся в цьому діалозі в ролі - Російського Гопника";
                     case JOKER -> userSessionDataRoleText = "Спілкуйся в цьому діалозі в ролі - Жартівника";
@@ -2306,7 +2693,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
             }
         }
 
-        if (user.getUserData().getSubscription() == null && user.getUserData().getAvailableRequests() < 1){
+        if (user.getUserData().getSubscription() == null && user.getUserData().getAvailableRequests() < 1) {
             InputStream photoStream = getClass().getClassLoader().getResourceAsStream(insufficientBalanceImgPath);
 
             InputFile photoInputFile = new InputFile(photoStream, insufficientBalanceImgPath);
@@ -2314,18 +2701,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
             InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
             InlineKeyboardButton sevenButton = InlineKeyboardButton.builder()
-                    .callbackData("dd")
+                    .callbackData(PaymentCallback.PAYMENT_SEVEN_CALLBACK_DATA)
                     .text(sevenDaysButtonText)
                     .build();
 
-            //todo callbacks
             InlineKeyboardButton thirtyButton = InlineKeyboardButton.builder()
-                    .callbackData("dd")
+                    .callbackData(PaymentCallback.PAYMENT_THIRTY_CALLBACK_DATA)
                     .text(thirtyButtonText)
                     .build();
 
             InlineKeyboardButton ninetyButton = InlineKeyboardButton.builder()
-                    .callbackData("dd")
+                    .callbackData(PaymentCallback.PAYMENT_NINETY_CALLBACK_DATA)
                     .text(ninetyButtonText)
                     .build();
 
@@ -2354,7 +2740,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
             try {
                 execute(sendPhoto);
                 photoStream.close();
-            } catch (TelegramApiException | IOException e){
+            } catch (TelegramApiException | IOException e) {
                 e.printStackTrace();
             }
 
@@ -2376,7 +2762,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         try {
             message = execute(sendMessage);
             execute(sendChatAction);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
 
@@ -2384,8 +2770,8 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         int lastKey = 0;
 
-        for (Map.Entry<Integer, ChatRequestDto.Message> key : messageHistory.entrySet()){
-            if (key.getKey() > lastKey){
+        for (Map.Entry<Integer, ChatRequestDto.Message> key : messageHistory.entrySet()) {
+            if (key.getKey() > lastKey) {
                 lastKey = key.getKey();
             }
         }
@@ -2403,16 +2789,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         chatRequestDtoMessages.add(initialChatRueqestDtoMessage);
 
-//        messageHistory.forEach((s, s2) -> {
-//            ChatRequestDto.Message chatRueqestDtoMessage = ChatRequestDto.Message.builder()
-//                    .role(s)
-//                    .content(s2)
-//                    .build();
-//
-//            chatRequestDtoMessages.add(chatRueqestDtoMessage);
-//        });
-
-        for(Map.Entry<Integer, ChatRequestDto.Message> key : messageHistory.entrySet()){
+        for (Map.Entry<Integer, ChatRequestDto.Message> key : messageHistory.entrySet()) {
             String role = key.getValue().getRole();
             String content = key.getValue().getContent();
 
@@ -2420,7 +2797,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         }
 
         ChatRequestDto chatRequestDto = ChatRequestDto.builder()
-                .model("gpt-3.5-turbo")
+                .model(userSessionData.getModel())
                 .messages(chatRequestDtoMessages)
                 .build();
 
@@ -2431,7 +2808,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         messageHistory.put(lastKey, ChatRequestDto.Message.builder().role("assistant")
                 .content(chatResponseDtoResponseEntity.getChoices()[0].getMessage().getContent()).build());
 
-        if (messageHistory.size() > 15){
+        if (messageHistory.size() > 15) {
             userSessionData.setMessageHistory(new HashMap<>());
         } else {
             userSessionData.setMessageHistory(messageHistory);
@@ -2442,19 +2819,19 @@ public class TelegramBotService extends TelegramLongPollingBot {
         String completionText = TelegramTextFormatterUtil.replaceCodeTags(chatResponseDtoResponseEntity.getChoices()[0].getMessage().getContent());
 
         EditMessageText editMessageText = EditMessageText.builder()
-                        .messageId(message.getMessageId())
-                                .chatId(chatId)
-                                    .parseMode("html")
-                                        .text(completionText)
-                                                .build();
+                .messageId(message.getMessageId())
+                .chatId(chatId)
+                .parseMode("html")
+                .text(completionText)
+                .build();
 
         try {
             execute(editMessageText);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
 
-        if (user.getUserData().getSubscription() == null){
+        if (user.getUserData().getSubscription() == null) {
             user.getUserData().setAvailableRequests(user.getUserData().getAvailableRequests() - 1);
         }
 
@@ -2463,10 +2840,10 @@ public class TelegramBotService extends TelegramLongPollingBot {
         System.out.println(chatResponseDtoResponseEntity.getChoices()[0].getMessage().getContent());
     }
 
-    private void handleResetMessage(long chatId){
+    private void handleResetMessage(long chatId) {
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionData = UserSessionData.builder()
                     .language(UserSessionDataLanguage.RU)
                     .role(UserSessionDataRole.CHAT_GPT).build();
@@ -2474,7 +2851,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         String successReset = null;
 
-        switch (userSessionData.getLanguage()){
+        switch (userSessionData.getLanguage()) {
             case RU -> successReset = "✅ <b>Контекст сброшен</b>";
             case UA -> successReset = "✅ <b>Контекст скинуто</b>";
             case EN -> successReset = "✅ <b>Context resetted</b>";
@@ -2491,15 +2868,15 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(sendMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
 
-    private void handleChooseRole(long chatId){
+    private void handleChooseRole(long chatId) {
         UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
 
-        if (userSessionData == null){
+        if (userSessionData == null) {
             userSessionData = getDefUserSessionData();
         }
 
@@ -2517,7 +2894,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         roleChatGptButtonText = "ChatGPT \uD83E\uDD16";
 
-        switch (userSessionData.getLanguage()){
+        switch (userSessionData.getLanguage()) {
             case RU -> {
                 chooseRoleMessageText = "⚙\uFE0F <b>Выберите режим для чата из предложенного списка. После выбора предыдущий диалог будет завершен:</b>";
 
@@ -2530,7 +2907,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 roleEinsteinButtonText = "Эйнштейн \uD83E\uDDE0";
                 roleBullyButtonText = "Гопник \uD83E\uDD2C";
 
-                switch (userSessionData.getRole()){
+                switch (userSessionData.getRole()) {
                     case CHAT_GPT -> roleChatGptButtonText = roleChatGptButtonText + " [ВЫБРАНО]";
                     case PROGRAMMER -> roleProgrammerButtonText = roleProgrammerButtonText + " [ВЫБРАНО]";
                     case PSYCOLOGIST -> rolePsycologistButtonText = rolePsycologistButtonText + " [ВЫБРАНО]";
@@ -2555,7 +2932,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 roleEinsteinButtonText = "Ейнштейн \uD83E\uDDE0";
                 roleBullyButtonText = "Гопник \uD83E\uDD2C";
 
-                switch (userSessionData.getRole()){
+                switch (userSessionData.getRole()) {
                     case CHAT_GPT -> roleChatGptButtonText = roleChatGptButtonText + " [ВИБРАНО]";
                     case PROGRAMMER -> roleProgrammerButtonText = roleProgrammerButtonText + " [ВИБРАНО]";
                     case PSYCOLOGIST -> rolePsycologistButtonText = rolePsycologistButtonText + " [ВИБРАНО]";
@@ -2579,7 +2956,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 roleEinsteinButtonText = "Einstein \uD83E\uDDE0";
                 roleBullyButtonText = "Bully \uD83E\uDD2C";
 
-                switch (userSessionData.getRole()){
+                switch (userSessionData.getRole()) {
                     case CHAT_GPT -> roleChatGptButtonText = roleChatGptButtonText + " [CHOSEN]";
                     case PROGRAMMER -> roleProgrammerButtonText = roleProgrammerButtonText + " [CHOSEN]";
                     case PSYCOLOGIST -> rolePsycologistButtonText = rolePsycologistButtonText + " [CHOSEN]";
@@ -2597,47 +2974,47 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton roleChatGptButton = InlineKeyboardButton.builder()
-                .callbackData(CHOOSE_CHAT_GPT_ROLE_CALLBACK_DATA)
+                .callbackData(ChooseCallback.CHOOSE_CHAT_GPT_ROLE_CALLBACK_DATA)
                 .text(roleChatGptButtonText)
                 .build();
 
         InlineKeyboardButton roleProgrammerButton = InlineKeyboardButton.builder()
-                .callbackData(CHOOSE_PROGRAMMER_ROLE_CALLBACK_DATA)
+                .callbackData(ChooseCallback.CHOOSE_PROGRAMMER_ROLE_CALLBACK_DATA)
                 .text(roleProgrammerButtonText)
                 .build();
 
         InlineKeyboardButton rolePsycologistButton = InlineKeyboardButton.builder()
-                .callbackData(CHOOSE_PSYCOLOGIST_ROLE_CALLBACK_DATA)
+                .callbackData(ChooseCallback.CHOOSE_PSYCOLOGIST_ROLE_CALLBACK_DATA)
                 .text(rolePsycologistButtonText)
                 .build();
 
         InlineKeyboardButton roleJokerButton = InlineKeyboardButton.builder()
-                .callbackData(CHOOSE_JOKER_ROLE_CALLBACK_DATA)
+                .callbackData(ChooseCallback.CHOOSE_JOKER_ROLE_CALLBACK_DATA)
                 .text(roleJokerButtonText)
                 .build();
 
         InlineKeyboardButton roleLinguistButton = InlineKeyboardButton.builder()
-                .callbackData(CHOOSE_LINGUIST_ROLE_CALLBACK_DATA)
+                .callbackData(ChooseCallback.CHOOSE_LINGUIST_ROLE_CALLBACK_DATA)
                 .text(roleLinguistButtonText)
                 .build();
 
         InlineKeyboardButton rolePoetButton = InlineKeyboardButton.builder()
-                .callbackData(CHOOSE_POET_ROLE_CALLBACK_DATA)
+                .callbackData(ChooseCallback.CHOOSE_POET_ROLE_CALLBACK_DATA)
                 .text(rolePoetButtonText)
                 .build();
 
         InlineKeyboardButton roleMonaLisaButton = InlineKeyboardButton.builder()
-                .callbackData(CHOOSE_MONA_LISA_ROLE_CALLBACK_DATA)
+                .callbackData(ChooseCallback.CHOOSE_MONA_LISA_ROLE_CALLBACK_DATA)
                 .text(roleMonaLisaButtonText)
                 .build();
 
         InlineKeyboardButton roleEinsteinButton = InlineKeyboardButton.builder()
-                .callbackData(CHOOSE_EINSTEIN_ROLE_CALLBACK_DATA)
+                .callbackData(ChooseCallback.CHOOSE_EINSTEIN_ROLE_CALLBACK_DATA)
                 .text(roleEinsteinButtonText)
                 .build();
 
         InlineKeyboardButton roleBullyButton = InlineKeyboardButton.builder()
-                .callbackData(CHOOSE_BULLY_ROLE_CALLBACK_DATA)
+                .callbackData(ChooseCallback.CHOOSE_BULLY_ROLE_CALLBACK_DATA)
                 .text(roleBullyButtonText)
                 .build();
 
@@ -2676,12 +3053,13 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(message);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
-    private void handleAdminMessage(User user, long chatId){
-        if (!user.getRole().equals(UserRole.ADMIN)){
+
+    private void handleAdminMessage(User user, long chatId) {
+        if (!user.getRole().equals(UserRole.ADMIN)) {
             SendMessage message = SendMessage.builder()
                     .chatId(chatId)
                     .text("\uD83D\uDEAB <b>У вас не хватает прав</b>")
@@ -2690,7 +3068,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
             try {
                 execute(message);
-            } catch (TelegramApiException e){
+            } catch (TelegramApiException e) {
                 e.printStackTrace();
             }
             return;
@@ -2701,12 +3079,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton statButton = InlineKeyboardButton.builder()
-                .callbackData(STAT_CALLBACK_DATA)
+                .callbackData(AdminCallback.STAT_CALLBACK_DATA)
                 .text("\uD83D\uDCC8 Статистика")
                 .build();
 
         InlineKeyboardButton allUsersButton = InlineKeyboardButton.builder()
-                .callbackData(ALL_USERS_DATA_CALLBACK_DATA)
+                .callbackData(AdminCallback.ALL_USERS_DATA_CALLBACK_DATA)
                 .text("\uD83D\uDC65 Все пользователи")
                 .build();
 
@@ -2716,22 +3094,32 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 .build();
 
         InlineKeyboardButton giveSubscribeButton = InlineKeyboardButton.builder()
-                .callbackData(GIVE_SUBSCRIBE_CALLBACK_DATA)
+                .callbackData(AdminCallback.GIVE_SUBSCRIBE_CALLBACK_DATA)
                 .text("➕ Выдать подписку")
                 .build();
 
         InlineKeyboardButton takeSubscribeButton = InlineKeyboardButton.builder()
-                .callbackData(TAKE_SUBSCRIBE_CALLBACK_DATA)
+                .callbackData(AdminCallback.TAKE_SUBSCRIBE_CALLBACK_DATA)
                 .text("➖ Забрать подписку")
                 .build();
 
+        InlineKeyboardButton giveAdminButton = InlineKeyboardButton.builder()
+                .callbackData(AdminCallback.GIVE_ADMIN_CALLBACK_DATA)
+                .text("➕ Выдать админку")
+                .build();
+
+        InlineKeyboardButton takeAdminButton = InlineKeyboardButton.builder()
+                .callbackData(AdminCallback.TAKE_ADMIN_CALLBACK_DATA)
+                .text("➖ Забрать админку")
+                .build();
+
         InlineKeyboardButton banButton = InlineKeyboardButton.builder()
-                .callbackData(BAN_USER_CALLBACK_DATA)
+                .callbackData(AdminCallback.BAN_USER_CALLBACK_DATA)
                 .text("\uD83D\uDD12 Заблокировать пользователя")
                 .build();
 
         InlineKeyboardButton unbanButton = InlineKeyboardButton.builder()
-                .callbackData(UNBAN_USER_CALLBACK_DATA)
+                .callbackData(AdminCallback.UNBAN_USER_CALLBACK_DATA)
                 .text("\uD83D\uDD13 Разблокировать пользователя")
                 .build();
 
@@ -2740,6 +3128,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         List<InlineKeyboardButton> keyboardButtonsRow2 = new ArrayList<>();
         List<InlineKeyboardButton> keyboardButtonsRow3 = new ArrayList<>();
         List<InlineKeyboardButton> keyboardButtonsRow4 = new ArrayList<>();
+        List<InlineKeyboardButton> keyboardButtonsRow5 = new ArrayList<>();
 
         keyboardButtonsRow1.add(statButton);
 
@@ -2749,8 +3138,11 @@ public class TelegramBotService extends TelegramLongPollingBot {
         keyboardButtonsRow3.add(giveSubscribeButton);
         keyboardButtonsRow3.add(takeSubscribeButton);
 
-        keyboardButtonsRow4.add(banButton);
-        keyboardButtonsRow4.add(unbanButton);
+        keyboardButtonsRow4.add(giveAdminButton);
+        keyboardButtonsRow4.add(takeAdminButton);
+
+        keyboardButtonsRow5.add(banButton);
+        keyboardButtonsRow5.add(unbanButton);
 
         List<List<InlineKeyboardButton>> rowList = new ArrayList<>();
 
@@ -2758,25 +3150,27 @@ public class TelegramBotService extends TelegramLongPollingBot {
         rowList.add(keyboardButtonsRow2);
         rowList.add(keyboardButtonsRow3);
         rowList.add(keyboardButtonsRow4);
+        rowList.add(keyboardButtonsRow5);
 
         inlineKeyboardMarkup.setKeyboard(rowList);
 
 
         SendMessage message = SendMessage.builder()
-                        .chatId(chatId)
-                        .text(adminMessageText)
-                        .replyMarkup(inlineKeyboardMarkup)
-                        .parseMode("html")
-                        .build();
+                .chatId(chatId)
+                .text(adminMessageText)
+                .replyMarkup(inlineKeyboardMarkup)
+                .parseMode("html")
+                .build();
 
         try {
             execute(message);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
-    private void editAdminMessage(User user, long chatId, int messageId){
-        if (!user.getRole().equals(UserRole.ADMIN)){
+
+    private void editAdminMessage(User user, long chatId, int messageId) {
+        if (!user.getRole().equals(UserRole.ADMIN)) {
             EditMessageText editMessage = EditMessageText.builder()
                     .chatId(chatId)
                     .messageId(messageId)
@@ -2786,7 +3180,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
             try {
                 execute(editMessage);
-            } catch (TelegramApiException e){
+            } catch (TelegramApiException e) {
                 e.printStackTrace();
             }
             return;
@@ -2797,12 +3191,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton statButton = InlineKeyboardButton.builder()
-                .callbackData(STAT_CALLBACK_DATA)
+                .callbackData(AdminCallback.STAT_CALLBACK_DATA)
                 .text("\uD83D\uDCC8 Статистика")
                 .build();
 
         InlineKeyboardButton allUsersButton = InlineKeyboardButton.builder()
-                .callbackData(ALL_USERS_DATA_CALLBACK_DATA)
+                .callbackData(AdminCallback.ALL_USERS_DATA_CALLBACK_DATA)
                 .text("\uD83D\uDC65 Все пользователи")
                 .build();
 
@@ -2813,22 +3207,32 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 .build();
 
         InlineKeyboardButton giveSubscribeButton = InlineKeyboardButton.builder()
-                .callbackData(GIVE_SUBSCRIBE_CALLBACK_DATA)
+                .callbackData(AdminCallback.GIVE_SUBSCRIBE_CALLBACK_DATA)
                 .text("➕ Выдать подписку")
                 .build();
 
         InlineKeyboardButton takeSubscribeButton = InlineKeyboardButton.builder()
-                .callbackData(TAKE_SUBSCRIBE_CALLBACK_DATA)
+                .callbackData(AdminCallback.TAKE_SUBSCRIBE_CALLBACK_DATA)
                 .text("➖ Забрать подписку")
                 .build();
 
+        InlineKeyboardButton giveAdminButton = InlineKeyboardButton.builder()
+                .callbackData(AdminCallback.GIVE_ADMIN_CALLBACK_DATA)
+                .text("➕ Выдать админку")
+                .build();
+
+        InlineKeyboardButton takeAdminButton = InlineKeyboardButton.builder()
+                .callbackData(AdminCallback.TAKE_ADMIN_CALLBACK_DATA)
+                .text("➖ Забрать админку")
+                .build();
+
         InlineKeyboardButton banButton = InlineKeyboardButton.builder()
-                .callbackData(BAN_USER_CALLBACK_DATA)
+                .callbackData(AdminCallback.BAN_USER_CALLBACK_DATA)
                 .text("\uD83D\uDD12 Заблокировать пользователя")
                 .build();
 
         InlineKeyboardButton unbanButton = InlineKeyboardButton.builder()
-                .callbackData(UNBAN_USER_CALLBACK_DATA)
+                .callbackData(AdminCallback.UNBAN_USER_CALLBACK_DATA)
                 .text("\uD83D\uDD13 Разблокировать пользователя")
                 .build();
 
@@ -2837,6 +3241,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         List<InlineKeyboardButton> keyboardButtonsRow2 = new ArrayList<>();
         List<InlineKeyboardButton> keyboardButtonsRow3 = new ArrayList<>();
         List<InlineKeyboardButton> keyboardButtonsRow4 = new ArrayList<>();
+        List<InlineKeyboardButton> keyboardButtonsRow5 = new ArrayList<>();
 
         keyboardButtonsRow1.add(statButton);
 
@@ -2846,8 +3251,11 @@ public class TelegramBotService extends TelegramLongPollingBot {
         keyboardButtonsRow3.add(giveSubscribeButton);
         keyboardButtonsRow3.add(takeSubscribeButton);
 
-        keyboardButtonsRow4.add(banButton);
-        keyboardButtonsRow4.add(unbanButton);
+        keyboardButtonsRow4.add(giveAdminButton);
+        keyboardButtonsRow4.add(takeAdminButton);
+
+        keyboardButtonsRow5.add(banButton);
+        keyboardButtonsRow5.add(unbanButton);
 
         List<List<InlineKeyboardButton>> rowList = new ArrayList<>();
 
@@ -2855,6 +3263,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         rowList.add(keyboardButtonsRow2);
         rowList.add(keyboardButtonsRow3);
         rowList.add(keyboardButtonsRow4);
+        rowList.add(keyboardButtonsRow5);
 
         inlineKeyboardMarkup.setKeyboard(rowList);
 
@@ -2869,12 +3278,13 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(editMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
-    private void editStatMessage(User user, long chatId, int messageId){
-        if (!user.getRole().equals(UserRole.ADMIN)){
+
+    private void editStatMessage(User user, long chatId, int messageId) {
+        if (!user.getRole().equals(UserRole.ADMIN)) {
             EditMessageText editMessage = EditMessageText.builder()
                     .chatId(chatId)
                     .messageId(messageId)
@@ -2884,7 +3294,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
             try {
                 execute(editMessage);
-            } catch (TelegramApiException e){
+            } catch (TelegramApiException e) {
                 e.printStackTrace();
             }
             return;
@@ -2894,7 +3304,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         String editMessageText = "\uD83D\uDCC8 <b>Статистика использования бота</b>\n\n"
                 + "\uD83D\uDC65 <b>Всего пользователей:</b> " + usersCount + " шт.\n"
-                + "\uD83D\uDCB3 <b>Всего подписок:</b> " +  subscribesCount + " шт.\n\n"
+                + "\uD83D\uDCB3 <b>Всего подписок:</b> " + subscribesCount + " шт.\n\n"
                 + "\uD83D\uDCB0 <b>Выручка за все время:</b> 0 ₽\n"
                 + "\uD83D\uDCB0 <b>Выручка за месяц:</b> 0 ₽\n"
                 + "\uD83D\uDCB0 <b>Выручка за 24 часа:</b> 0 ₽";
@@ -2902,7 +3312,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                 .text("\uD83D\uDD19 Назад")
                 .build();
 
@@ -2926,12 +3336,13 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(editMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
-    private void handleAllUserDataMessage(User user, long chatId, int messageId){
-        if (!user.getRole().equals(UserRole.ADMIN)){
+
+    private void handleAllUserDataMessage(User user, long chatId, int messageId) {
+        if (!user.getRole().equals(UserRole.ADMIN)) {
             EditMessageText editMessage = EditMessageText.builder()
                     .chatId(chatId)
                     .messageId(messageId)
@@ -2941,7 +3352,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
             try {
                 execute(editMessage);
-            } catch (TelegramApiException e){
+            } catch (TelegramApiException e) {
                 e.printStackTrace();
             }
             return;
@@ -2950,7 +3361,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
 
         InlineKeyboardButton backButton = InlineKeyboardButton.builder()
-                .callbackData(BACK_ADMIN_CALLBACK_DATA)
+                .callbackData(BackCallback.BACK_ADMIN_CALLBACK_DATA)
                 .text("\uD83D\uDD19 Назад")
                 .build();
 
@@ -2974,7 +3385,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(editMessage);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
 
@@ -2984,7 +3395,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             tempFile = File.createTempFile("tempfile" + System.currentTimeMillis(), ".txt");
-        } catch (IOException e){
+        } catch (IOException e) {
             e.printStackTrace();
         }
 
@@ -2995,7 +3406,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 String hasSubscribedData = key.getUserData().getSubscription() == null ? "нет" : "да";
 
                 String userData = "_________________________________________\n"
-                        + "ID: " + key.getId() +"\n"
+                        + "ID: " + key.getId() + "\n"
                         + "Роль: " + roleData + "\n"
                         + "Telegram CHAT-ID: " + key.getTelegramChatId() + "\n"
                         + "Telegram USER-ID: " + key.getTelegramUserId() + "\n"
@@ -3015,7 +3426,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             inputFile.validate();
-        }catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
 
@@ -3028,7 +3439,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
             execute(document);
 
             boolean isDeleted = tempFile.delete();
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
 
@@ -3042,12 +3453,203 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
         try {
             execute(editMessage1);
-        } catch (TelegramApiException e){
+        } catch (TelegramApiException e) {
             e.printStackTrace();
         }
     }
+
+    private void handleChangeModel(User user, long chatId) {
+        if (user.getUserData().getSubscription() == null) {
+            handlePayMessage(chatId);
+            return;
+        }
+
+        UserSessionData userSessionData = usersSessionsDataMap.get(chatId);
+        UserSessionDataLanguage language;
+
+        if (userSessionData == null) {
+            userSessionData = getDefUserSessionData();
+            language = UserSessionDataLanguage.RU;
+        } else {
+            language = userSessionData.getLanguage();
+        }
+
+        String messageText = null;
+
+        String chatGptThreeFiveButtonText = "\uD83D\uDC7D ChatGPT 3.5 Turbo";
+        String chatGptFourButtonText = "\uD83E\uDD16 ChatGPT 4";
+        String chatGptFourTurboButtonText = "\uD83D\uDC7E ChatGPT 4 Turbo";
+
+        switch (language) {
+            case RU -> {
+                messageText = "⚙\uFE0F <b>Выберите модель, с которой вы хотите ввести диалог.</b>\n"
+                        + "<b>После выбора предыдущий диалог будет завершен:</b>";
+
+                if (userSessionData.getModel().equals("gpt-3.5-turbo")) {
+                    chatGptThreeFiveButtonText = chatGptThreeFiveButtonText + " [ВЫБРАНО]";
+                } else if (userSessionData.getModel().equals("gpt-4")) {
+                    chatGptFourButtonText = chatGptFourButtonText + " [ВЫБРАНО]";
+                } else if (userSessionData.getModel().equals("gpt-4-1106-preview")) {
+                    chatGptFourTurboButtonText = chatGptFourTurboButtonText + " [ВЫБРАНО]";
+                }
+            }
+            case UA -> {
+                messageText = "⚙\uFE0F <b>Виберіть модель, з якою ви бажаєте ввести діалог.</b>\n"
+                        + "<b>Після вибору попередній діалог буде завершено:</b>";
+
+                if (userSessionData.getModel().equals("gpt-3.5-turbo")) {
+                    chatGptThreeFiveButtonText = chatGptThreeFiveButtonText + " [ВИБРАНО]";
+                } else if (userSessionData.getModel().equals("gpt-4")) {
+                    chatGptFourButtonText = chatGptFourButtonText + " [ВИБРАНО]";
+                } else if (userSessionData.getModel().equals("gpt-4-1106-preview")) {
+                    chatGptFourTurboButtonText = chatGptFourTurboButtonText + " [ВИБРАНО]";
+                }
+            }
+            case EN -> {
+                messageText = "⚙\uFE0F <b>Select the model with which you want to enter a dialogue.</b>\n"
+                        + "<b>Once selected, the previous dialog will be completed:</b>";
+
+                if (userSessionData.getModel().equals("gpt-3.5-turbo")) {
+                    chatGptThreeFiveButtonText = chatGptThreeFiveButtonText + " [CHOSEN]";
+                } else if (userSessionData.getModel().equals("gpt-4")) {
+                    chatGptFourButtonText = chatGptFourButtonText + " [CHOSEN]";
+                } else if (userSessionData.getModel().equals("gpt-4-1106-preview")) {
+                    chatGptFourTurboButtonText = chatGptFourTurboButtonText + " [CHOSEN]";
+                }
+            }
+        }
+
+        InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
+
+        InlineKeyboardButton chatGptThreeFiveButton = InlineKeyboardButton.builder()
+                .callbackData(ChangeModelCallback.CHANGE_MODEL_CHAT_GPT_THREE_FIVE_CALLBACK_DATA)
+                .text(chatGptThreeFiveButtonText)
+                .build();
+
+        InlineKeyboardButton chatGptFourButton = InlineKeyboardButton.builder()
+                .callbackData(ChangeModelCallback.CHANGE_MODEL_CHAT_GPT_FOUR_CALLBACK_DATA)
+                .text(chatGptFourButtonText)
+                .build();
+
+        InlineKeyboardButton chatGptFourTurboButton = InlineKeyboardButton.builder()
+                .callbackData(ChangeModelCallback.CHANGE_MODEL_CHAT_GPT_FOUR_TURBO_CALLBACK_DATA)
+                .text(chatGptFourTurboButtonText)
+                .build();
+
+        List<InlineKeyboardButton> keyboardButtonsRow1 = new ArrayList<>();
+        List<InlineKeyboardButton> keyboardButtonsRow2 = new ArrayList<>();
+        List<InlineKeyboardButton> keyboardButtonsRow3 = new ArrayList<>();
+
+        keyboardButtonsRow1.add(chatGptThreeFiveButton);
+        keyboardButtonsRow2.add(chatGptFourButton);
+        keyboardButtonsRow3.add(chatGptFourTurboButton);
+
+        List<List<InlineKeyboardButton>> rowList = new ArrayList<>();
+
+        rowList.add(keyboardButtonsRow1);
+        rowList.add(keyboardButtonsRow2);
+        rowList.add(keyboardButtonsRow3);
+
+        inlineKeyboardMarkup.setKeyboard(rowList);
+
+        SendMessage message = SendMessage.builder()
+                .text(messageText)
+                .chatId(chatId)
+                .replyMarkup(inlineKeyboardMarkup)
+                .parseMode("html")
+                .build();
+
+        try {
+            execute(message);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    private ReplyKeyboardMarkup getMainReplyKeyboardMarkup(UserSessionDataLanguage userSessionDataLanguage, User user) {
+
+        String profileButtonText = null;
+        String refreshButtonText = null;
+        String roleButtonText = null;
+        String cardButtonText = null;
+        String swapModelButtonText = null;
+
+        switch (userSessionDataLanguage) {
+            case RU -> {
+                profileButtonText = "\uD83D\uDC64 Профиль";
+                refreshButtonText = "\uD83D\uDD04 Сбросить контекст";
+                roleButtonText = "\uD83C\uDFAD Выбрать роль";
+                cardButtonText = "\uD83D\uDCB3 Подписка";
+                swapModelButtonText = "\uD83D\uDD04 Поменять модель";
+            }
+            case EN -> {
+                profileButtonText = "\uD83D\uDC64 Profile";
+                refreshButtonText = "\uD83D\uDD04 Drop chat context";
+                roleButtonText = "\uD83C\uDFAD Choose a role";
+                cardButtonText = "\uD83D\uDCB3 Subscription";
+                swapModelButtonText = "\uD83D\uDD04 Change model";
+            }
+            case UA -> {
+                profileButtonText = "\uD83D\uDC64 Профіль";
+                refreshButtonText = "\uD83D\uDD04 Скинути контекст";
+                roleButtonText = "\uD83C\uDFAD Вибрати роль";
+                cardButtonText = "\uD83D\uDCB3 Пiдписка";
+                swapModelButtonText = "\uD83D\uDD04 Змінити модель";
+            }
+        }
+        ReplyKeyboardMarkup keyboardMarkup = new ReplyKeyboardMarkup();
+        keyboardMarkup.setSelective(true);
+        keyboardMarkup.setResizeKeyboard(true);
+        keyboardMarkup.setOneTimeKeyboard(false);
+
+        KeyboardButton profileButton = new KeyboardButton(profileButtonText);
+        KeyboardButton refreshButton = new KeyboardButton(refreshButtonText);
+        KeyboardButton roleButton = new KeyboardButton(roleButtonText);
+        KeyboardButton cardButton = new KeyboardButton(cardButtonText);
+
+        KeyboardRow keyboardRow1 = new KeyboardRow();
+        KeyboardRow keyboardRow2 = new KeyboardRow();
+
+        keyboardRow1.add(profileButton);
+        keyboardRow1.add(refreshButton);
+
+        keyboardRow2.add(roleButton);
+        keyboardRow2.add(cardButton);
+
+        List<KeyboardRow> keyboardRows = new ArrayList<>();
+
+        keyboardRows.add(keyboardRow1);
+        keyboardRows.add(keyboardRow2);
+
+        if (user.getUserData().getSubscription() != null) {
+            KeyboardButton swapModelButton = new KeyboardButton(swapModelButtonText);
+
+            KeyboardRow keyboardRow3 = new KeyboardRow();
+
+            keyboardRow3.add(swapModelButton);
+
+            keyboardRows.add(keyboardRow3);
+        }
+        if (user.getRole().equals(UserRole.ADMIN)) {
+            KeyboardButton adminButton = new KeyboardButton("\uD83D\uDED1 Админ-панель");
+
+            KeyboardRow keyboardRow4 = new KeyboardRow();
+
+            keyboardRow4.add(adminButton);
+
+            keyboardRows.add(keyboardRow4);
+        }
+
+        keyboardMarkup.setKeyboard(keyboardRows);
+
+        return keyboardMarkup;
+    }
+
+
     private UserSessionData getDefUserSessionData(){
         return UserSessionData.builder()
+                .model("gpt-3.5-turbo")
                 .role(UserSessionDataRole.CHAT_GPT)
                 .messageHistory(new HashMap<>())
                 .language(UserSessionDataLanguage.RU)

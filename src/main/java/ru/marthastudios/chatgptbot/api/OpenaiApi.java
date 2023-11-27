@@ -33,6 +33,8 @@ public class OpenaiApi {
 
         headers.set("Authorization", "Bearer " + openaiApiKey);
 
+        System.out.println(chatRequestDto.getModel());
+
         HttpEntity<ChatRequestDto> requestEntity = new HttpEntity<>(chatRequestDto, headers);
 
         ResponseEntity<ChatResponseDto> chatResponseDtoResponseEntity = restTemplate.postForEntity(OPENAI_CHAT_COMPLETION_URL, requestEntity, ChatResponseDto.class);

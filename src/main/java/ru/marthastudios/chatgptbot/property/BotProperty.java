@@ -17,4 +17,10 @@ public class BotProperty {
 
     @Value("${telegram.channel.chatId}")
     private String channelChatId;
+
+    @Value("${telegram.channel.name}")
+    private String channelName;
+
+    @Value("${telegram.channel.link}")
+    private String channelLink;
 }
