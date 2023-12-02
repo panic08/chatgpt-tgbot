@@ -2,6 +2,7 @@ package ru.marthastudios.chatgptbot.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import ru.marthastudios.chatgptbot.enums.DepositCurrency;
 
 @Entity
 @Table(name = "deposits")
@@ -18,6 +19,9 @@ public class Deposit {
     private Long telegramUserId;
     @Column(name = "amount", nullable = false)
     private Double amount;
+    @Column(name = "currency", nullable = false)
+    @Enumerated(value = EnumType.STRING)
+    private DepositCurrency currency;
     @Column(name = "timestamp", nullable = false)
     private Long timestamp;
 }

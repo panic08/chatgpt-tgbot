@@ -22,14 +22,6 @@ public class TelegramTextFormatterUtil {
             }
         }
 
-//        for (char c : originalCode.toCharArray()) {
-//            if (c == '`') {
-//                insideCodeBlock = !insideCodeBlock;
-//                result.append(insideCodeBlock ? "<pre>" : "</pre>");
-//            } else{
-//                result.append(c);
-//            }
-//        }
 
         return result.toString();
     }

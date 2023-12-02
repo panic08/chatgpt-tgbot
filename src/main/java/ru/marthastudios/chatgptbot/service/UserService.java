@@ -22,12 +22,20 @@ public class UserService {
         return userRepository.save(user);
     }
 
+    @Transactional
+    public List<User> createAll(List<User> users){
+        return userRepository.saveAll(users);
+    }
+
     public User getByTelegramChatId(long telegramChatId){
         return userRepository.findByTelegramChatId(telegramChatId);
     }
 
     public User getByTelegramUserId(long telegramUserId){
         return userRepository.findByTelegramUserId(telegramUserId);
+    }
+    public User getById(long id){
+        return userRepository.findById(id).orElseThrow();
     }
 
     public List<User> getAll(){

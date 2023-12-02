@@ -8,6 +8,7 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import ru.marthastudios.chatgptbot.callback.PaymentCallback;
 import ru.marthastudios.chatgptbot.entity.User;
 import ru.marthastudios.chatgptbot.enums.UserSessionDataLanguage;
 import ru.marthastudios.chatgptbot.pojo.UserSessionData;
@@ -75,39 +76,39 @@ public class BonusScheduler {
                         messageText = "\uD83D\uDD1A <b>Ваша подписка закончилась. Если вы хотите продолжить пользоваться ботом, подпишитесь снова!</b>";
 
                         sevenDaysButtonText = "\uD83D\uDCC5 Безлимит на 7 дней - 199 ₽";
-                        thirtyButtonText = "\uD83D\uDCC5 Безлимит на 30 дней - 449 ₽";
-                        ninetyButtonText = "\uD83D\uDCC5 Безлимит на 90 дней - 1199 ₽";
+                        thirtyButtonText = "\uD83D\uDCC5 Безлимит на 30 дней - 399 ₽";
+                        ninetyButtonText = "\uD83D\uDCC5 Безлимит на 90 дней - 899 ₽";
                     }
                     case UA -> {
                         messageText = "\uD83D\uDD1A <b>Ваша підписка закінчилася. Якщо ви хочете продовжити користуватися ботом, підпишіться знову!</b>";
 
-                        sevenDaysButtonText = "\uD83D\uDCC5 Безлiмiт на 7 днiв - 7 $";
-                        thirtyButtonText = "\uD83D\uDCC5 Безлiмiт на 30 днiв - 20 $";
-                        ninetyButtonText = "\uD83D\uDCC5 Безлiмiт на 90 днiв - 40 $";
+                        sevenDaysButtonText = "\uD83D\uDCC5 Безлiмiт на 7 днiв - 2.2 $";
+                        thirtyButtonText = "\uD83D\uDCC5 Безлiмiт на 30 днiв - 4.5 $";
+                        ninetyButtonText = "\uD83D\uDCC5 Безлiмiт на 90 днiв - 10 $";
                     }
                     case EN -> {
                         messageText = "\uD83D\uDD1A <b>Your subscription has expired. If you want to continue using the bot, subscribe again!</b>";
 
-                        sevenDaysButtonText = "\uD83D\uDCC5 Unlimited for 7 days - 7 $";
-                        thirtyButtonText = "\uD83D\uDCC5 Unlimited for 30 days - 20 $";
-                        ninetyButtonText = "\uD83D\uDCC5 Unlimited for 90 days - 40 $";
+                        sevenDaysButtonText = "\uD83D\uDCC5 Unlimited for 7 days - 2.2 $";
+                        thirtyButtonText = "\uD83D\uDCC5 Unlimited for 30 days - 4.5 $";
+                        ninetyButtonText = "\uD83D\uDCC5 Unlimited for 90 days - 10 $";
                     }
                 }
 
                 InlineKeyboardMarkup inlineKeyboardMarkup = new InlineKeyboardMarkup();
-                //todo
+
                 InlineKeyboardButton sevenButton = InlineKeyboardButton.builder()
-                        .callbackData("dd")
+                        .callbackData(PaymentCallback.PAYMENT_SEVEN_CALLBACK_DATA)
                         .text(sevenDaysButtonText)
                         .build();
 
                 InlineKeyboardButton thirtyButton = InlineKeyboardButton.builder()
-                        .callbackData("dd")
+                        .callbackData(PaymentCallback.PAYMENT_THIRTY_CALLBACK_DATA)
                         .text(thirtyButtonText)
                         .build();
 
                 InlineKeyboardButton ninetyButton = InlineKeyboardButton.builder()
-                        .callbackData("dd")
+                        .callbackData(PaymentCallback.PAYMENT_NINETY_CALLBACK_DATA)
                         .text(ninetyButtonText)
                         .build();
 
@@ -137,7 +138,7 @@ public class BonusScheduler {
                 try {
                     telegramBotService.execute(message);
                 } catch (TelegramApiException e){
-                    e.printStackTrace();
+                    log.warn(e.getMessage());
                 }
             }
         });

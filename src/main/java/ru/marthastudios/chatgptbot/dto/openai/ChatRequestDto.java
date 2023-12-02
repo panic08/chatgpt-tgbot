@@ -1,6 +1,7 @@
 package ru.marthastudios.chatgptbot.dto.openai;
 
 import lombok.*;
+import ru.marthastudios.chatgptbot.dto.openai.parent.ChatRequest;
 
 import java.util.List;
 
@@ -9,7 +10,7 @@ import java.util.List;
 @Getter
 @Setter
 @Builder
-public class ChatRequestDto {
+public class ChatRequestDto extends ChatRequest {
     private String model;
     private List<Message> messages;
 

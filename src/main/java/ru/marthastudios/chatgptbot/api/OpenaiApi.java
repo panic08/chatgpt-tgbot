@@ -13,11 +13,10 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 import ru.marthastudios.chatgptbot.dto.openai.AudioResponseDto;
 import ru.marthastudios.chatgptbot.dto.openai.ChatRequestDto;
+import ru.marthastudios.chatgptbot.dto.openai.ChatRequestWithImageDto;
 import ru.marthastudios.chatgptbot.dto.openai.ChatResponseDto;
 
 import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
 
 @Component
 @RequiredArgsConstructor
@@ -36,6 +35,20 @@ public class OpenaiApi {
         System.out.println(chatRequestDto.getModel());
 
         HttpEntity<ChatRequestDto> requestEntity = new HttpEntity<>(chatRequestDto, headers);
+
+        ResponseEntity<ChatResponseDto> chatResponseDtoResponseEntity = restTemplate.postForEntity(OPENAI_CHAT_COMPLETION_URL, requestEntity, ChatResponseDto.class);
+
+        return chatResponseDtoResponseEntity.getBody();
+    }
+
+    public ChatResponseDto createChatCompletionWithImage(ChatRequestWithImageDto chatRequestWithImageDto){
+        HttpHeaders headers = new HttpHeaders();
+
+        headers.set("Authorization", "Bearer " + openaiApiKey);
+
+        System.out.println(chatRequestWithImageDto.getModel());
+
+        HttpEntity<ChatRequestWithImageDto> requestEntity = new HttpEntity<>(chatRequestWithImageDto, headers);
 
         ResponseEntity<ChatResponseDto> chatResponseDtoResponseEntity = restTemplate.postForEntity(OPENAI_CHAT_COMPLETION_URL, requestEntity, ChatResponseDto.class);
 
